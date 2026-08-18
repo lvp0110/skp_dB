@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ConstrTodo SKP</title>
+  <style>
+    :root {
+      --bg: #f3f5f8;
+      --panel: #ffffff;
+      --line: #e4e8ee;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --accent: #0f766e;
+      --accent-hover: #0d9488;
+      --accent-text: #fff;
+      --danger: #b42318;
+      --danger-bg: #fef3f2;
+      --ok: #067647;
+      --ok-bg: #ecfdf3;
+      --pending: #b54708;
+      --pending-bg: #fffaeb;
+      --draft: #344054;
+      --draft-bg: #f2f4f7;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    body { display: flex; flex-direction: column; }
+    header {
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    h1 { margin: 0; font-size: 15px; font-weight: 650; }
+    .sub { color: var(--muted); font-size: 12px; }
+    .wrap { padding: 12px 14px 16px; overflow: auto; flex: 1; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+    label { display: block; font-size: 12px; color: var(--muted); margin: 0 0 4px; }
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font: inherit;
+      background: #fff;
+      color: var(--text);
+      margin-bottom: 10px;
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: 2px solid rgba(15, 118, 110, 0.25);
+      border-color: var(--accent);
+    }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .row > * { flex: 1; }
+    button {
+      border: 0;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      background: var(--accent);
+      color: var(--accent-text);
+    }
+    button:hover { background: var(--accent-hover); }
+    button:disabled { opacity: 0.55; cursor: default; }
+    button.ghost {
+      background: #eef2f6;
+      color: var(--text);
+    }
+    button.ghost:hover { background: #e4e8ee; }
+    button.danger { background: var(--danger); }
+    .banner {
+      display: none;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-bottom: 12px;
+    }
+    .banner.error { display: block; background: var(--danger-bg); color: var(--danger); }
+    .banner.ok { display: block; background: var(--ok-bg); color: var(--ok); }
+    .item {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 10px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      background: #fff;
+    }
+    .item.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.15); }
+    .item-title { font-weight: 650; margin-bottom: 4px; }
+    .meta { color: var(--muted); font-size: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .badge {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 1px 8px;
+      font-size: 11px;
+      font-weight: 650;
+      background: var(--draft-bg);
+      color: var(--draft);
+    }
+    .badge.approved { background: var(--ok-bg); color: var(--ok); }
+    .badge.pending { background: var(--pending-bg); color: var(--pending); }
+    .badge.rejected { background: var(--danger-bg); color: var(--danger); }
+    .empty { color: var(--muted); padding: 18px 8px; text-align: center; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .actions button { flex: 1; min-width: 120px; }
+    .hidden { display: none !important; }
+    details summary { cursor: pointer; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>ConstrTodo SKP</h1>
+      <div class="sub" id="headerSub">v1.0.4 · модели материалов</div>
+    </div>
+    <button class="ghost hidden" id="logoutBtn" type="button">Выйти</button>
+  </header>
+  <div class="wrap">
+    <div id="banner" class="banner"></div>
+
+    <section id="loginView" class="card">
+      <form id="loginForm">
+        <label for="email">Email</label>
+        <input id="email" type="email" autocomplete="username" required placeholder="you@company.ru">
+        <label for="password">Пароль</label>
+        <input id="password" type="password" autocomplete="current-password" required placeholder="Пароль">
+        <details>
+          <summary>Сервер API</summary>
+          <label for="apiBase" style="margin-top:8px">Базовый URL</label>
+          <input id="apiBase" type="url" placeholder="https://content.constrtodo.ru/api">
+        </details>
+        <button id="loginBtn" type="submit">Войти</button>
+      </form>
+    </section>
+
+    <section id="appView" class="hidden">
+      <div class="card">
+        <label for="contentType">Тип контента</label>
+        <select id="contentType"></select>
+        <div class="row">
+          <input id="search" type="search" placeholder="Поиск по имени…" style="margin-bottom:0">
+          <button class="ghost" id="refreshBtn" type="button" style="flex:0 0 auto">Обновить</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="sub" style="margin-bottom:8px">Открытые модели SketchUp</div>
+        <div id="openList"></div>
+        <button class="ghost" id="refreshOpenBtn" type="button">Обновить список окон</button>
+      </div>
+
+      <div class="card">
+        <div class="sub" style="margin-bottom:8px">Модели ConstrTodo</div>
+        <div id="list"></div>
+        <div class="actions" style="margin-top:10px">
+          <button id="openBtn" type="button" disabled>Открыть в SketchUp</button>
+          <button class="ghost" id="versionBtn" type="button" disabled>Новая версия</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="sub" style="margin-bottom:8px">Отправить выбранную модель</div>
+        <div class="sub" id="formMeta" style="margin-bottom:8px"></div>
+        <label>Приватность</label>
+        <select id="privacyGroup">
+          <option value="public" selected>Публичный</option>
+          <option value="private">Приватный</option>
+        </select>
+        <div id="uploadFields"></div>
+        <button id="uploadBtn" type="button">Отправить как новый документ</button>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const state = {
+      busy: false,
+      items: [],
+      selectedId: null,
+      fields: [],
+      session: null,
+      openModels: [],
+      selectedModelId: null
+    };
+
+    const $ = (id) => document.getElementById(id);
+
+    function callRuby(name, payload) {
+      if (!window.sketchup || typeof window.sketchup[name] !== 'function') return;
+      if (payload === undefined) {
+        window.sketchup[name]();
+        return;
+      }
+      window.sketchup[name](typeof payload === 'string' ? payload : JSON.stringify(payload));
+    }
+
+    function setBusy(busy, name) {
+      state.busy = busy;
+      const disable = busy;
+      ['loginBtn', 'logoutBtn', 'refreshBtn', 'openBtn', 'versionBtn', 'uploadBtn', 'refreshOpenBtn', 'contentType'].forEach((id) => {
+        const el = $(id);
+        if (!el) return;
+        if (id === 'openBtn' || id === 'versionBtn') {
+          el.disabled = disable || !state.selectedId;
+        } else {
+          el.disabled = disable;
+        }
+      });
+      if (busy) {
+        const labels = {
+          login: 'Вход…',
+          upload: 'Сохраняю и отправляю модель…',
+          open: 'Скачиваю модель…',
+          refresh: 'Обновляю список…'
+        };
+        showBanner('ok', labels[name] || 'Выполняется запрос…');
+      }
+    }
+
+    function showBanner(kind, text) {
+      const el = $('banner');
+      if (!text) {
+        el.className = 'banner';
+        el.textContent = '';
+        return;
+      }
+      el.className = 'banner ' + (kind === 'error' ? 'error' : 'ok');
+      el.textContent = text;
+    }
+
+    function selectedItem() {
+      return state.items.find((item) => String(item.id) === String(state.selectedId)) || null;
+    }
+
+    function badgeClass(status) {
+      if (status === 'approved') return 'badge approved';
+      if (status === 'pending') return 'badge pending';
+      if (status === 'rejected') return 'badge rejected';
+      return 'badge';
+    }
+
+    function formatDate(value) {
+      if (!value) return '';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return String(value);
+      return date.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
+
+    function renderList() {
+      const q = $('search').value.trim().toLowerCase();
+      const root = $('list');
+      const items = state.items.filter((item) => {
+        if (!q) return true;
+        return (item.name || '').toLowerCase().includes(q) || String(item.id).includes(q);
+      });
+      if (!items.length) {
+        root.innerHTML = '<div class="empty">Нет моделей. Войдите и нажмите «Обновить», либо отправьте текущую модель.</div>';
+        return;
+      }
+      root.innerHTML = items.map((item) => {
+        const active = String(item.id) === String(state.selectedId) ? ' active' : '';
+        return (
+          '<div class="item' + active + '" data-id="' + item.id + '">' +
+            '<div class="item-title">' + escapeHtml(item.name || ('Документ ' + item.id)) + '</div>' +
+            '<div class="meta">' +
+              '<span class="' + badgeClass(item.status) + '">' + escapeHtml(item.statusLabel || item.status || '') + '</span>' +
+              '<span>' + escapeHtml(formatDate(item.updatedAt)) + '</span>' +
+              '<span>' + escapeHtml(item.updatedBy || '') + '</span>' +
+            '</div>' +
+          '</div>'
+        );
+      }).join('');
+      root.querySelectorAll('.item').forEach((el) => {
+        el.addEventListener('click', () => {
+          state.selectedId = el.getAttribute('data-id');
+          $('openBtn').disabled = state.busy;
+          $('versionBtn').disabled = state.busy;
+          renderList();
+        });
+      });
+    }
+
+    function renderOpenModels() {
+      const root = $('openList');
+      const items = state.openModels || [];
+      if (!items.length) {
+        root.innerHTML = '<div class="empty">SketchUp не отдал открытые модели. Кликните окно модели и нажмите «Обновить список окон».</div>';
+        return;
+      }
+      if (!state.selectedModelId) {
+        const active = items.find((item) => item.active);
+        state.selectedModelId = String((active || items[0]).objectId);
+      }
+      root.innerHTML = items.map((item) => {
+        const active = String(item.objectId) === String(state.selectedModelId) ? ' active' : '';
+        const badge = item.active ? '<span class="badge approved">активна</span>' : '<span class="badge">фон</span>';
+        const modified = item.modified ? 'изменённая' : 'без изменений';
+        return (
+          '<div class="item' + active + '" data-oid="' + item.objectId + '">' +
+            '<div class="item-title">' + escapeHtml(item.name || ('Модель ' + item.objectId)) + '</div>' +
+            '<div class="meta">' + badge +
+              '<span>' + escapeHtml(modified) + '</span>' +
+              '<span>' + escapeHtml(String(item.entities || 0)) + ' объектов</span>' +
+            '</div>' +
+            (item.path ? '<div class="meta">' + escapeHtml(item.path) + '</div>' : '') +
+          '</div>'
+        );
+      }).join('');
+      root.querySelectorAll('.item').forEach((el) => {
+        el.addEventListener('click', () => {
+          state.selectedModelId = el.getAttribute('data-oid');
+          const selected = items.find((item) => String(item.objectId) === String(state.selectedModelId));
+          if (selected) setModelName(selected.name);
+          renderOpenModels();
+        });
+      });
+    }
+
+    function fieldCode(field) {
+      return String((field && (field.code || field.Code || field.key)) || '');
+    }
+
+    function fieldName(field) {
+      return String((field && (field.name || field.Name || field.title)) || fieldCode(field));
+    }
+
+    function fieldType(field) {
+      return String((field && (field.type || field.Type)) || 'text');
+    }
+
+    function fieldRequired(field) {
+      return !!(field && (field.required || field.Required));
+    }
+
+    function isFileField(field) {
+      const type = fieldType(field);
+      return ['file', 'file_dwg', 'file_pdf', 'file_dxf', 'file_skp'].indexOf(type) >= 0;
+    }
+
+    function renderUploadFields() {
+      const root = $('uploadFields');
+      const fields = (state.fields || []).filter((field) => fieldCode(field) !== 'privacy_group');
+      if (!fields.length) {
+        root.innerHTML =
+          '<div class="empty">Форма типа не получена. Проверьте CSRF и нажмите «Обновить».</div>' +
+          '<label for="uploadName">Название</label>' +
+          '<input id="uploadName" type="text" placeholder="Имя модели">' +
+          '<label for="f-constr_code">Код конструкции <span class="meta">(constr_code, обязательное)</span> *</label>' +
+          '<input id="f-constr_code" data-code="constr_code" type="text" placeholder="Код конструкции">';
+        return;
+      }
+      root.innerHTML = fields.map((field) => {
+        const code = fieldCode(field);
+        const type = fieldType(field);
+        const required = fieldRequired(field) || code === 'constr_code';
+        const req = required ? ' required' : '';
+        const label = escapeHtml(fieldName(field)) +
+          ' <span class="meta">(' + escapeHtml(code || 'без кода') +
+          ' · ' + escapeHtml(type) +
+          (required ? ', обязательное' : '') + ')</span>' +
+          (required ? ' *' : '');
+        if (isFileField(field)) {
+          return '<label>' + label + '</label>' +
+            '<div class="meta" style="margin-bottom:10px">Сюда уйдёт .skp выбранной открытой модели. ' +
+            (field.accept ? 'accept: ' + escapeHtml(field.accept) : '') + '</div>';
+        }
+        if (type === 'list' || type === 'multiple_list') {
+          const multiple = type === 'multiple_list' ? ' multiple' : '';
+          const options = (field.options || []).map((opt) => {
+            const optCode = opt.code || opt.Code || '';
+            const optName = opt.name || opt.Name || optCode;
+            return '<option value="' + escapeHtml(optCode) + '">' + escapeHtml(optName) + '</option>';
+          }).join('');
+          const extra = type === 'list'
+            ? '<input data-fallback="' + escapeHtml(code) + '" type="text" placeholder="или введите код вручную">'
+            : '';
+          return '<label for="f-' + escapeHtml(code) + '">' + label + '</label>' +
+            '<select id="f-' + escapeHtml(code) + '" data-code="' + escapeHtml(code) + '"' + req + multiple + '>' +
+            (multiple ? '' : '<option value="">—</option>') + options + '</select>' + extra;
+        }
+        if (type === 'text_area') {
+          return '<label for="f-' + escapeHtml(code) + '">' + label + '</label>' +
+            '<textarea id="f-' + escapeHtml(code) + '" data-code="' + escapeHtml(code) + '"' + req + '></textarea>';
+        }
+        const inputType = type === 'number' ? 'number' : (type === 'date' ? 'date' : 'text');
+        return '<label for="f-' + escapeHtml(code) + '">' + label + '</label>' +
+          '<input id="f-' + escapeHtml(code) + '" data-code="' + escapeHtml(code) + '" type="' + inputType + '"' + req + '>';
+      }).join('');
+      root.querySelectorAll('select[data-code]').forEach((el) => {
+        el.addEventListener('change', () => {
+          callRuby('refresh_form', collectUploadValues());
+        });
+      });
+    }
+
+    function collectUploadValues() {
+      const values = {
+        privacy_group: $('privacyGroup') ? $('privacyGroup').value : 'public',
+        modelObjectId: state.selectedModelId
+      };
+      const named = $('uploadName');
+      if (named) values.name = named.value.trim();
+      document.querySelectorAll('#uploadFields [data-code]').forEach((el) => {
+        const code = el.getAttribute('data-code');
+        if (!code) return;
+        if (el.multiple) {
+          values[code] = Array.from(el.selectedOptions).map((opt) => opt.value).filter(Boolean);
+        } else {
+          values[code] = el.value;
+        }
+      });
+      document.querySelectorAll('#uploadFields [data-fallback]').forEach((el) => {
+        const code = el.getAttribute('data-fallback');
+        if (!code) return;
+        const typed = String(el.value || '').trim();
+        if (typed && !values[code]) values[code] = typed;
+      });
+      if (!values.name) {
+        const first = document.querySelector('#uploadFields input[data-code], #uploadFields textarea[data-code]');
+        if (first) values.name = first.value;
+      }
+      return values;
+    }
+
+    function restoreUploadValues(values) {
+      if (!values) return;
+      document.querySelectorAll('#uploadFields [data-code]').forEach((el) => {
+        const code = el.getAttribute('data-code');
+        const value = values[code];
+        if (value == null || value === '') return;
+        if (el.multiple && Array.isArray(value)) {
+          Array.from(el.options).forEach((opt) => {
+            opt.selected = value.indexOf(opt.value) >= 0;
+          });
+        } else if (el.tagName === 'SELECT') {
+          el.value = value;
+          if (el.value !== String(value) && value) {
+            const extra = document.createElement('option');
+            extra.value = value;
+            extra.textContent = value;
+            extra.selected = true;
+            el.appendChild(extra);
+          }
+        } else {
+          el.value = value;
+        }
+      });
+      document.querySelectorAll('#uploadFields [data-fallback]').forEach((el) => {
+        const code = el.getAttribute('data-fallback');
+        const select = document.querySelector('#uploadFields [data-code="' + code + '"]');
+        if ((!select || !select.value) && values[code]) el.value = values[code];
+      });
+    }
+
+    function isPlaceholderName(value) {
+      const text = String(value || '').trim().toLowerCase();
+      return !text || text === 'sketchup model' || text === 'untitled' || text === 'новая модель';
+    }
+
+    function nameInputs() {
+      const nodes = [];
+      const named = $('uploadName');
+      if (named) nodes.push(named);
+      document.querySelectorAll('#uploadFields [data-code="name"], #uploadFields [data-code="title"], #uploadFields [data-code="header"]').forEach((el) => {
+        if (nodes.indexOf(el) < 0) nodes.push(el);
+      });
+      if (!nodes.length) {
+        const first = document.querySelector('#uploadFields input[data-code], #uploadFields textarea[data-code]');
+        if (first) nodes.push(first);
+      }
+      return nodes;
+    }
+
+    function setModelName(name) {
+      if (!name || isPlaceholderName(name)) return;
+      nameInputs().forEach((el) => {
+        if (el.tagName === 'SELECT') return;
+        if (isPlaceholderName(el.value)) el.value = name;
+      });
+    }
+
+    function showApp(loggedIn) {
+      $('loginView').classList.toggle('hidden', loggedIn);
+      $('appView').classList.toggle('hidden', !loggedIn);
+      $('logoutBtn').classList.toggle('hidden', !loggedIn);
+    }
+
+    function requiredFieldLabels() {
+      const missing = [];
+      (state.fields || []).forEach((field) => {
+        const code = fieldCode(field);
+        if (!code || code === 'privacy_group' || isFileField(field)) return;
+        const required = fieldRequired(field) || code === 'constr_code';
+        if (!required) return;
+        const el = document.querySelector('#uploadFields [data-code="' + code + '"]');
+        const fallback = document.querySelector('#uploadFields [data-fallback="' + code + '"]');
+        let empty = true;
+        if (el && el.multiple) {
+          empty = Array.from(el.selectedOptions).filter((opt) => opt.value).length === 0;
+        } else {
+          const selected = el ? String(el.value || '').trim() : '';
+          const typed = fallback ? String(fallback.value || '').trim() : '';
+          empty = !selected && !typed;
+        }
+        if (empty) missing.push(fieldName(field) + ' [' + code + ']');
+      });
+      const constr = document.querySelector('#uploadFields [data-code="constr_code"]');
+      const constrFallback = document.querySelector('#uploadFields [data-fallback="constr_code"]');
+      const constrValue = ((constr && constr.value) || (constrFallback && constrFallback.value) || '').trim();
+      if (!constrValue && missing.every((item) => item.indexOf('[constr_code]') < 0)) {
+        missing.push('Код конструкции [constr_code]');
+      }
+      const named = $('uploadName');
+      if (named && !named.value.trim()) missing.push('Название');
+      return missing;
+    }
+
+    function escapeHtml(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    window.SkpDbUI = {
+      onEvent: function (event, payload) {
+        payload = payload || {};
+        if (event === 'boot') {
+          $('email').value = payload.email || '';
+          $('apiBase').value = payload.apiBase || '';
+          $('headerSub').textContent = 'v' + (payload.version || '') + ' · ' + (payload.email || 'сессия');
+          setModelName(payload.modelName);
+          return;
+        }
+        if (event === 'busy') {
+          setBusy(!!payload.busy, payload.name);
+          return;
+        }
+        if (event === 'error') {
+          showBanner('error', payload.error || 'Ошибка');
+          return;
+        }
+        if (event === 'session') {
+          state.session = payload;
+          showApp(!!payload.ok);
+          if (payload.ok) {
+            $('headerSub').textContent = 'v' + (payload.version || '') + ' · ' + (payload.email || 'сессия');
+            showBanner('ok', 'Вход выполнен');
+          } else if (payload.error) {
+            showBanner('error', payload.error);
+          }
+          return;
+        }
+        if (event === 'types') {
+          const select = $('contentType');
+          const items = payload.items || [];
+          const current = payload.current || '';
+          select.innerHTML = items.map((item) => {
+            const selected = item.code === current ? ' selected' : '';
+            return '<option value="' + escapeHtml(item.code) + '"' + selected + '>' +
+              escapeHtml(item.name || item.code) + '</option>';
+          }).join('');
+          if (current && !items.some((item) => item.code === current)) {
+            select.innerHTML = '<option value="' + escapeHtml(current) + '" selected>' + escapeHtml(current) + '</option>' + select.innerHTML;
+          }
+          return;
+        }
+        if (event === 'openModels') {
+          state.openModels = payload.items || [];
+          renderOpenModels();
+          const selected = state.openModels.find((item) => String(item.objectId) === String(state.selectedModelId));
+          if (selected) setModelName(selected.name);
+          return;
+        }
+        if (event === 'form') {
+          const prev = collectUploadValues();
+          state.fields = payload.fields || [];
+          renderUploadFields();
+          restoreUploadValues(prev);
+          const meta = $('formMeta');
+          const csrf = payload.csrf || {};
+          meta.textContent = 'Тип: ' + (payload.contentType || '—') +
+            ' · полей: ' + state.fields.length +
+            ' · CSRF: ' + (csrf.hasToken ? ('есть (' + csrf.tokenLength + ' симв.)') : 'нет') +
+            (csrf.cookieNames && csrf.cookieNames.length ? ' · cookie: ' + csrf.cookieNames.join(', ') : '');
+          callRuby('model_name');
+          if (!payload.ok && payload.error) {
+            showBanner('error', 'Форма типа: ' + payload.error);
+          }
+          return;
+        }
+        if (event === 'list') {
+          if (!payload.ok) {
+            showBanner('error', payload.error || 'Не удалось получить список');
+            return;
+          }
+          state.items = payload.items || [];
+          if (state.selectedId && !state.items.some((item) => String(item.id) === String(state.selectedId))) {
+            state.selectedId = null;
+            $('openBtn').disabled = true;
+            $('versionBtn').disabled = true;
+          }
+          renderList();
+          showBanner('ok', 'Найдено моделей: ' + state.items.length);
+          return;
+        }
+        if (event === 'modelName') {
+          setModelName(payload.name);
+          return;
+        }
+        if (event === 'opened') {
+          showBanner('ok', 'Файл сохранён и открыт: ' + (payload.filename || ''));
+          return;
+        }
+        if (event === 'uploaded') {
+          showBanner('ok', payload.mode === 'version' ? 'Новая версия отправлена' : 'Модель отправлена в ConstrTodo');
+        }
+      }
+    };
+
+    $('loginForm').addEventListener('submit', (event) => {
+      event.preventDefault();
+      callRuby('login', {
+        email: $('email').value.trim(),
+        password: $('password').value,
+        apiBase: $('apiBase').value.trim()
+      });
+    });
+    $('logoutBtn').addEventListener('click', () => callRuby('logout'));
+    $('refreshBtn').addEventListener('click', () => callRuby('refresh', {}));
+    $('refreshOpenBtn').addEventListener('click', () => callRuby('refresh_open_models'));
+    $('contentType').addEventListener('change', () => {
+      callRuby('set_content_type', $('contentType').value);
+    });
+    $('search').addEventListener('input', renderList);
+    $('openBtn').addEventListener('click', () => {
+      if (state.selectedId) callRuby('open_item', String(state.selectedId));
+    });
+    $('uploadBtn').addEventListener('click', () => {
+      const missing = requiredFieldLabels();
+      if (missing.length) {
+        showBanner('error', 'Заполните обязательные поля: ' + missing.join(', '));
+        return;
+      }
+      callRuby('upload_new', collectUploadValues());
+    });
+    $('versionBtn').addEventListener('click', () => {
+      const item = selectedItem();
+      if (!item) return;
+      const missing = requiredFieldLabels();
+      if (missing.length) {
+        showBanner('error', 'Заполните обязательные поля: ' + missing.join(', '));
+        return;
+      }
+      const values = collectUploadValues();
+      values.groupId = item.groupId || item.id;
+      callRuby('upload_version', values);
+    });
+
+    callRuby('ready');
+  </script>
+</body>
+</html>
