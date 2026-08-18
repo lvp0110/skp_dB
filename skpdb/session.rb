@@ -29,12 +29,14 @@ module Constrtodo
 
       def content_type
         value = Sketchup.read_default(PLUGIN_ID, PREF_CONTENT_TYPE, CONTENT_TYPE_CODE).to_s.strip
-        value.empty? ? CONTENT_TYPE_CODE : value
+        return CONTENT_TYPE_CODE if value.empty? || !::Constrtodo::SkpDb.sketchup_type_code?(value)
+
+        value
       end
 
       def content_type=(value)
         code = value.to_s.strip
-        code = CONTENT_TYPE_CODE if code.empty?
+        code = CONTENT_TYPE_CODE if code.empty? || !::Constrtodo::SkpDb.sketchup_type_code?(code)
         Sketchup.write_default(PLUGIN_ID, PREF_CONTENT_TYPE, code)
         code
       end

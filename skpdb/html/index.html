@@ -128,7 +128,7 @@
   <header>
     <div>
       <h1>ConstrTodo SKP</h1>
-      <div class="sub" id="headerSub">v1.0.4 · модели материалов</div>
+      <div class="sub" id="headerSub">v1.0.5 · модели материалов</div>
     </div>
     <button class="ghost hidden" id="logoutBtn" type="button">Выйти</button>
   </header>
@@ -161,18 +161,18 @@
       </div>
 
       <div class="card">
-        <div class="sub" style="margin-bottom:8px">Открытые модели SketchUp</div>
-        <div id="openList"></div>
-        <button class="ghost" id="refreshOpenBtn" type="button">Обновить список окон</button>
-      </div>
-
-      <div class="card">
         <div class="sub" style="margin-bottom:8px">Модели ConstrTodo</div>
         <div id="list"></div>
         <div class="actions" style="margin-top:10px">
           <button id="openBtn" type="button" disabled>Открыть в SketchUp</button>
           <button class="ghost" id="versionBtn" type="button" disabled>Новая версия</button>
         </div>
+      </div>
+
+      <div class="card">
+        <div class="sub" style="margin-bottom:8px">Открытые модели SketchUp</div>
+        <div id="openList"></div>
+        <button class="ghost" id="refreshOpenBtn" type="button">Обновить список окон</button>
       </div>
 
       <div class="card">
@@ -578,9 +578,6 @@
             return '<option value="' + escapeHtml(item.code) + '"' + selected + '>' +
               escapeHtml(item.name || item.code) + '</option>';
           }).join('');
-          if (current && !items.some((item) => item.code === current)) {
-            select.innerHTML = '<option value="' + escapeHtml(current) + '" selected>' + escapeHtml(current) + '</option>' + select.innerHTML;
-          }
           return;
         }
         if (event === 'openModels') {

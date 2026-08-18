@@ -3,7 +3,7 @@ module Constrtodo
 
     PLUGIN_ID = 'ConstrtodoSkpDb'.freeze
     PLUGIN_NAME = 'ConstrTodo SKP'.freeze
-    VERSION = '1.0.4'.freeze
+    VERSION = '1.0.5'.freeze
 
     MODULE_PATH = File.dirname(__FILE__).freeze
     HTML_PATH = File.join(MODULE_PATH, 'html', 'index.html').freeze
@@ -15,6 +15,15 @@ module Constrtodo
       sketchup_model_for_material
       sketchup_model_for_construction
     ].freeze
+    SKETCHUP_TYPE_MARKERS = %w[sketchup скетчап].freeze
+
+    def self.sketchup_type_code?(code, name = '')
+      text = "#{code} #{name}".downcase
+      return false if code.to_s.strip.empty?
+      return true if CONTENT_TYPE_FALLBACKS.include?(code.to_s)
+
+      SKETCHUP_TYPE_MARKERS.any? { |marker| text.include?(marker) }
+    end
 
     PREF_API_BASE = 'api_base'.freeze
     PREF_EMAIL = 'email'.freeze

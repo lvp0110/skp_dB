@@ -218,13 +218,17 @@ module Constrtodo
 
         list = unwrap(response[:body])
         list = list['data'] if list.is_a?(Hash) && list['data'].is_a?(Array)
-        items = Array(list).map { |item| normalize_content_type(item) }.reject { |item| item[:code].empty? }
-        if items.empty?
-          items = CONTENT_TYPE_FALLBACKS.map { |code| { code: code, name: code } }
+        items = Array(list).map { |item| normalize_content_type(item) }
+        items = items.select { |item| sketchup_content_type?(item) }
+        items = sketchup_type_fallbacks if items.empty?
+        current = content_type
+        unless items.any? { |item| item[:code] == current }
+          Session.content_type = items.first[:code]
+          current = content_type
         end
         {
           ok: true,
-          current: content_type,
+          current: current,
           items: items,
           error: nil
         }
@@ -232,9 +236,24 @@ module Constrtodo
         {
           ok: false,
           current: content_type,
-          items: CONTENT_TYPE_FALLBACKS.map { |code| { code: code, name: code } },
+          items: sketchup_type_fallbacks,
           error: e.message
         }
+      end
+
+      def sketchup_type_code?(code)
+        ::Constrtodo::SkpDb.sketchup_type_code?(code)
+      end
+
+      def sketchup_content_type?(item)
+        item = stringify_keys(item) if item.is_a?(Hash)
+        code = (item[:code] || item['code']).to_s
+        name = (item[:name] || item['name']).to_s
+        ::Constrtodo::SkpDb.sketchup_type_code?(code, name)
+      end
+
+      def sketchup_type_fallbacks
+        CONTENT_TYPE_FALLBACKS.map { |code| { code: code, name: code } }
       end
 
       def normalize_content_type(item)
