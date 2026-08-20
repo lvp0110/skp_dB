@@ -14,8 +14,9 @@ module Constrtodo
 
         downloaded = Api.download_file(file[:url])
         filename = safe_filename(downloaded[:filename] || file[:name], "model_#{content_id}.skp")
-        path = File.join(work_dir, filename)
+        path = File.join(work_dir, "download_#{content_id}_#{Time.now.to_i}.skp")
         File.binwrite(path, downloaded[:data])
+        raise 'Скачанный файл пуст' unless File.exist?(path) && File.size(path) > 50
 
         opened = open_skp(path)
         {
@@ -241,7 +242,7 @@ module Constrtodo
       end
 
       def work_dir
-        dir = File.join(Sketchup.temp_dir, 'constrtodo_skpdb')
+        dir = File.expand_path(File.join(Sketchup.temp_dir, 'constrtodo_skpdb'))
         FileUtils.mkdir_p(dir)
         dir
       end
@@ -255,8 +256,26 @@ module Constrtodo
       end
 
       def open_skp(path)
-        Sketchup.open_file(path)
-        true
+        path = File.expand_path(path.to_s)
+        raise 'Файл модели не найден' unless File.exist?(path)
+
+        status = begin
+          Sketchup.open_file(path, with_status: true)
+        rescue ArgumentError
+          Sketchup.open_file(path)
+          true
+        end
+
+        return true if status == true
+
+        success = []
+        success << Sketchup::Model::LOAD_STATUS_SUCCESS if defined?(Sketchup::Model::LOAD_STATUS_SUCCESS)
+        success << Sketchup::Model::LOAD_STATUS_SUCCESS_MORE_RECENT if defined?(Sketchup::Model::LOAD_STATUS_SUCCESS_MORE_RECENT)
+        return true if success.include?(status)
+        return true if success.empty? && status
+
+        raise 'Открытие файла отменено' if status == false || status.nil?
+        raise "Не удалось открыть модель в SketchUp (статус #{status})."
       end
 
       def build_form(schema, values, filename:, data:)

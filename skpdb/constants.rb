@@ -3,10 +3,23 @@ module Constrtodo
 
     PLUGIN_ID = 'ConstrtodoSkpDb'.freeze
     PLUGIN_NAME = 'ConstrTodo SKP'.freeze
-    VERSION = '1.1.1'.freeze
+    VERSION = '1.1.2'.freeze
+    USER_DATA_DIR_NAME = 'ConstrTodoSKP'.freeze
 
     MODULE_PATH = File.dirname(__FILE__).freeze
     HTML_PATH = File.join(MODULE_PATH, 'html', 'index.html').freeze
+
+    def self.osx?
+      if defined?(Sketchup.platform)
+        Sketchup.platform == :platform_osx
+      else
+        !!(RUBY_PLATFORM.to_s =~ /darwin/i)
+      end
+    end
+
+    def self.platform_code
+      osx? ? 'osx' : 'win'
+    end
 
     DEFAULT_API_ORIGIN = 'https://content.constrtodo.ru'.freeze
     DEFAULT_API_BASE = "#{DEFAULT_API_ORIGIN}/api".freeze

@@ -42,24 +42,41 @@ module Constrtodo
       end
 
       def cookies
-        return {} unless File.exist?(cookie_file)
+        jar = read_json_hash(cookie_file)
+        return jar unless jar.empty?
 
-        parsed = JSON.parse(File.read(cookie_file))
-        parsed.is_a?(Hash) ? parsed : {}
-      rescue JSON::ParserError
-        {}
+        jar = read_json_hash(legacy_cookie_file)
+        unless jar.empty?
+          begin
+            self.cookies = jar
+          rescue StandardError
+            nil
+          end
+          return jar
+        end
+
+        cookies_from_prefs
       end
 
       def cookies=(hash)
-        FileUtils.mkdir_p(File.dirname(cookie_file))
-        File.write(cookie_file, JSON.generate(hash || {}))
-        Sketchup.write_default(PLUGIN_ID, PREF_COOKIES, '{}')
-      rescue StandardError
-        Sketchup.write_default(PLUGIN_ID, PREF_COOKIES, JSON.generate(hash || {}))
+        json = JSON.generate(hash || {})
+        begin
+          FileUtils.mkdir_p(user_data_dir)
+          File.open(cookie_file, 'w') { |file| file.write(json) }
+          delete_legacy_cookie_file
+        rescue StandardError
+          nil
+        end
+        begin
+          Sketchup.write_default(PLUGIN_ID, PREF_COOKIES, json)
+        rescue StandardError
+          nil
+        end
       end
 
       def clear!
         File.delete(cookie_file) if File.exist?(cookie_file)
+        delete_legacy_cookie_file
         Sketchup.write_default(PLUGIN_ID, PREF_COOKIES, '{}')
       rescue StandardError
         Sketchup.write_default(PLUGIN_ID, PREF_COOKIES, '{}')
@@ -70,10 +87,62 @@ module Constrtodo
         jar.key?('csrf_token') || jar.keys.any? { |key| key.to_s =~ /session|token|auth|sid/i }
       end
 
+      def user_data_dir
+        if ::Constrtodo::SkpDb.osx?
+          home = ENV['HOME'].to_s
+          return File.join(Sketchup.temp_dir, USER_DATA_DIR_NAME) if home.empty?
+
+          File.join(home, 'Library', 'Application Support', USER_DATA_DIR_NAME)
+        else
+          appdata = ENV['APPDATA'].to_s
+          return File.join(Sketchup.temp_dir, USER_DATA_DIR_NAME) if appdata.empty?
+
+          File.join(appdata, USER_DATA_DIR_NAME)
+        end
+      end
+      private_class_method :user_data_dir
+
       def cookie_file
-        File.join(MODULE_PATH, 'session.json')
+        File.join(user_data_dir, 'session.json')
       end
       private_class_method :cookie_file
+
+      def legacy_cookie_file
+        File.join(MODULE_PATH, 'session.json')
+      end
+      private_class_method :legacy_cookie_file
+
+      def delete_legacy_cookie_file
+        path = legacy_cookie_file
+        File.delete(path) if File.exist?(path)
+      rescue StandardError
+        nil
+      end
+      private_class_method :delete_legacy_cookie_file
+
+      def read_json_hash(path)
+        return {} unless path && File.exist?(path)
+
+        raw = File.read(path).to_s
+        return {} if raw.strip.empty?
+
+        parsed = JSON.parse(raw)
+        parsed.is_a?(Hash) ? parsed : {}
+      rescue StandardError
+        {}
+      end
+      private_class_method :read_json_hash
+
+      def cookies_from_prefs
+        raw = Sketchup.read_default(PLUGIN_ID, PREF_COOKIES, '{}').to_s
+        return {} if raw.strip.empty? || raw == '{}'
+
+        parsed = JSON.parse(raw)
+        parsed.is_a?(Hash) ? parsed : {}
+      rescue StandardError
+        {}
+      end
+      private_class_method :cookies_from_prefs
     end
 
   end

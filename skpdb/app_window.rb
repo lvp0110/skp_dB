@@ -99,6 +99,8 @@ module Constrtodo
           run_action('open') do
             result = Transfer.open_content(id)
             push('opened', result)
+            push_open_models
+            UI.start_timer(0.4, false) { push_open_models if visible? }
             Sketchup.status_text = "ConstrTodo: открыт #{result[:filename]}"
             result
           end
@@ -175,7 +177,9 @@ module Constrtodo
           email: Session.email,
           apiBase: Session.api_base,
           modelName: Transfer.current_model_name,
-          contentType: Session.content_type
+          contentType: Session.content_type,
+          platform: ::Constrtodo::SkpDb.platform_code,
+          sketchupVersion: Sketchup.version.to_s
         })
         push_open_models
         return unless Session.logged_in?

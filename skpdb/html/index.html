@@ -202,7 +202,8 @@
       fields: [],
       session: null,
       openModels: [],
-      selectedModelId: null
+      selectedModelId: null,
+      platform: null
     };
 
     const $ = (id) => document.getElementById(id);
@@ -214,6 +215,25 @@
         return;
       }
       window.sketchup[name](typeof payload === 'string' ? payload : JSON.stringify(payload));
+    }
+
+    function isWindows() {
+      if (state.platform === 'win') return true;
+      if (state.platform === 'osx') return false;
+      return /Win/i.test(navigator.userAgent || '');
+    }
+
+    function waitForSketchup(done, attempt) {
+      attempt = attempt || 0;
+      if (window.sketchup && typeof window.sketchup.ready === 'function') {
+        done();
+        return;
+      }
+      if (attempt >= 120) {
+        showBanner('error', 'Нет связи с SketchUp. Закройте это окно и откройте плагин снова.');
+        return;
+      }
+      setTimeout(function () { waitForSketchup(done, attempt + 1); }, 50);
     }
 
     function setBusy(busy, name) {
@@ -554,6 +574,7 @@
       onEvent: function (event, payload) {
         payload = payload || {};
         if (event === 'boot') {
+          state.platform = payload.platform || state.platform;
           $('email').value = payload.email || '';
           $('apiBase').value = payload.apiBase || '';
           $('headerSub').textContent = 'v' + (payload.version || '') + ' · ' + (payload.email || 'сессия');
@@ -655,7 +676,14 @@
     });
     $('search').addEventListener('input', renderList);
     $('openBtn').addEventListener('click', () => {
-      if (state.selectedId) callRuby('open_item', String(state.selectedId));
+      if (!state.selectedId) return;
+      if (isWindows()) {
+        const ok = window.confirm(
+          'На Windows SketchUp закроет текущую модель и откроет скачанный файл. Сохраните изменения, если они нужны.'
+        );
+        if (!ok) return;
+      }
+      callRuby('open_item', String(state.selectedId));
     });
     $('uploadBtn').addEventListener('click', () => {
       const missing = requiredFieldLabels();
@@ -678,7 +706,7 @@
       callRuby('upload_version', values);
     });
 
-    callRuby('ready');
+    waitForSketchup(function () { callRuby('ready'); });
   </script>
 </body>
 </html>

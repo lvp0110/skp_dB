@@ -132,11 +132,13 @@ module Constrtodo
         end
 
         def onNewModel(model)
+          ModelIndex.prune!
           ModelIndex.remember(model)
           AppWindow.push_open_models
         end
 
         def onOpenModel(model)
+          ModelIndex.prune!
           ModelIndex.remember(model)
           AppWindow.push_open_models
         end
