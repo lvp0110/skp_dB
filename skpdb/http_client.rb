@@ -64,38 +64,18 @@ module Constrtodo
       end
 
       def request_uri(uri, method, json: nil, form: nil, accept: 'application/json')
-        http = Net::HTTP.new(uri.host, uri.port)
-        http.open_timeout = @open_timeout
-        http.read_timeout = @read_timeout
-        if uri.scheme == 'https'
-          http.use_ssl = true
-          http.verify_mode = OpenSSL::SSL::VERIFY_PEER
-        end
-
-        req = build_request(uri, method, json: json, form: form, accept: accept)
-        apply_headers!(req)
-        response = http.request(req)
-        store_cookies!(response)
-
-        body = decode_body(response)
-        {
-          code: response.code.to_i,
-          headers: response.to_hash,
-          body: body,
-          raw: response.body
-        }
+        perform_request(uri, method, json: json, form: form, accept: accept, verify: true)
       rescue OpenSSL::SSL::SSLError
         retry_insecure(uri, method, json: json, form: form, accept: accept)
       end
 
       def retry_insecure(uri, method, json: nil, form: nil, accept: 'application/json')
         # SketchUp Ruby часто без CA-сертификатов — повтор только после сбоя VERIFY_PEER.
-        http = Net::HTTP.new(uri.host, uri.port)
-        http.open_timeout = @open_timeout
-        http.read_timeout = @read_timeout
-        http.use_ssl = (uri.scheme == 'https')
-        http.verify_mode = OpenSSL::SSL::VERIFY_NONE if http.use_ssl?
+        perform_request(uri, method, json: json, form: form, accept: accept, verify: false)
+      end
 
+      def perform_request(uri, method, json:, form:, accept:, verify:)
+        http = new_http(uri, verify: verify)
         req = build_request(uri, method, json: json, form: form, accept: accept)
         apply_headers!(req)
         response = http.request(req)
@@ -107,6 +87,34 @@ module Constrtodo
           body: body,
           raw: response.body
         }
+      end
+
+      def new_http(uri, verify:)
+        proxy = proxy_uri
+        http = if proxy
+                 Net::HTTP.new(uri.host, uri.port, proxy.host, proxy.port, proxy.user, proxy.password)
+               else
+                 Net::HTTP.new(uri.host, uri.port)
+               end
+        http.open_timeout = @open_timeout
+        http.read_timeout = @read_timeout
+        if uri.scheme == 'https'
+          http.use_ssl = true
+          http.verify_mode = verify ? OpenSSL::SSL::VERIFY_PEER : OpenSSL::SSL::VERIFY_NONE
+        end
+        http
+      end
+
+      def proxy_uri
+        raw = ENV['HTTPS_PROXY'] || ENV['https_proxy'] || ENV['HTTP_PROXY'] || ENV['http_proxy']
+        return nil if raw.to_s.strip.empty?
+
+        uri = URI(raw)
+        return nil if uri.host.to_s.empty?
+
+        uri
+      rescue StandardError
+        nil
       end
 
       def build_request(uri, method, json:, form:, accept:)

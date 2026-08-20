@@ -1,4 +1,5 @@
 require 'json'
+require 'fileutils'
 
 module Constrtodo
   module SkpDb
@@ -11,9 +12,22 @@ module Constrtodo
 
       module_function
 
+      def show_shared
+        host = host_pid
+        if host && host != Process.pid && host_alive?(host)
+          Transfer.request_command(host, 'show') if defined?(Transfer)
+          return
+        end
+
+        show
+      end
+
       def show
-        if @dialog && @dialog.visible?
+        claim_host!
+        if @dialog
+          @dialog.show unless @dialog.visible?
           @dialog.bring_to_front
+          push_open_models
           return
         end
 
@@ -35,14 +49,71 @@ module Constrtodo
           style: style
         )
 
-        html = File.read(HTML_PATH)
-        html.force_encoding('UTF-8') if html.respond_to?(:force_encoding)
-        @dialog.set_html(html)
+        load_html!(@dialog)
         register_callbacks(@dialog)
-        @dialog.set_on_closed { @dialog = nil }
+        @dialog.set_on_closed do
+          @dialog = nil
+          release_host!
+        end
         @dialog.show
         schedule_model_name!
       end
+
+      def load_html!(dialog)
+        html = File.read(HTML_PATH)
+        html.force_encoding('UTF-8') if html.respond_to?(:force_encoding)
+        dialog.set_html(html)
+      end
+      private_class_method :load_html!
+
+      def host_file
+        File.join(Session.user_data_dir, 'plugin_host.json')
+      end
+      private_class_method :host_file
+
+      def host_pid
+        path = host_file
+        return nil unless File.exist?(path)
+
+        parsed = JSON.parse(File.read(path).to_s)
+        pid = parsed.is_a?(Hash) ? parsed['pid'].to_i : 0
+        pid > 0 ? pid : nil
+      rescue StandardError
+        nil
+      end
+      private_class_method :host_pid
+
+      def claim_host!
+        FileUtils.mkdir_p(File.dirname(host_file))
+        File.open(host_file, 'w') { |file| file.write(JSON.generate('pid' => Process.pid, 'at' => Time.now.to_i)) }
+      rescue StandardError
+        nil
+      end
+      private_class_method :claim_host!
+
+      def release_host!
+        return unless host_pid == Process.pid
+
+        File.delete(host_file) if File.exist?(host_file)
+      rescue StandardError
+        nil
+      end
+      private_class_method :release_host!
+
+      def host_alive?(pid)
+        pid = pid.to_i
+        return false if pid <= 0
+
+        Process.kill(0, pid)
+        true
+      rescue Errno::ESRCH
+        false
+      rescue Errno::EPERM
+        true
+      rescue StandardError
+        true
+      end
+      private_class_method :host_alive?
 
       def visible?
         !!(@dialog && @dialog.visible?)
@@ -95,10 +166,27 @@ module Constrtodo
           push_open_models
         end
 
-        dialog.add_action_callback('open_item') do |_ctx, id|
+        dialog.add_action_callback('activate_model') do |_ctx, object_id|
+          ModelIndex.activate(object_id)
+          push_open_models
+          selected = ModelIndex.summaries.find { |item| item[:objectId].to_s == object_id.to_s }
+          push('modelName', { name: selected[:name] }) if selected
+        end
+
+        dialog.add_action_callback('open_item') do |_ctx, raw|
           run_action('open') do
-            result = Transfer.open_content(id)
+            data = parse_open_payload(raw)
+            result = Transfer.open_content(
+              data['id'],
+              catalog_name: data['name'],
+              status: data['status'],
+              group_id: data['groupId'] || data['group_id']
+            )
             push('opened', result)
+            push_open_models
+            [0.4, 2.0, 5.0, 8.0].each do |delay|
+              UI.start_timer(delay, false) { push_open_models if visible? }
+            end
             Sketchup.status_text = "ConstrTodo: открыт #{result[:filename]}"
             result
           end
@@ -111,7 +199,7 @@ module Constrtodo
             load_list({})
             push_open_models
             push('modelName', { name: result[:filename].to_s.sub(/\.skp\z/i, '') })
-            push('uploaded', result.merge(mode: 'create'))
+            push('uploaded', result.merge(mode: result[:mode] || result['mode'] || 'create'))
             Sketchup.status_text = "ConstrTodo: отправлен #{result[:filename]}"
             result
           end
@@ -175,7 +263,9 @@ module Constrtodo
           email: Session.email,
           apiBase: Session.api_base,
           modelName: Transfer.current_model_name,
-          contentType: Session.content_type
+          contentType: Session.content_type,
+          platform: ::Constrtodo::SkpDb.platform_code,
+          sketchupVersion: Sketchup.version.to_s
         })
         push_open_models
         return unless Session.logged_in?
@@ -230,6 +320,26 @@ module Constrtodo
         push('busy', { name: name, busy: false })
       end
       private_class_method :run_action
+
+      def parse_open_payload(raw)
+        if raw.is_a?(Hash)
+          payload = stringify_payload(raw)
+          payload['id'] = payload['id'] || payload['contentId'] || payload['content_id']
+          return payload
+        end
+
+        text = raw.to_s.strip
+        if text.start_with?('{')
+          payload = parse_json(text)
+          unless payload.empty?
+            payload['id'] = payload['id'] || payload['contentId'] || payload['content_id']
+            return payload
+          end
+        end
+
+        { 'id' => text, 'name' => '' }
+      end
+      private_class_method :parse_open_payload
 
       def parse_json(raw)
         case raw

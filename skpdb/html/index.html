@@ -103,10 +103,9 @@
       background: #fff;
     }
     .item.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.15); }
-    #openList .item { cursor: default; }
+    #openList .item { cursor: pointer; }
     #openList .item.inactive {
-      opacity: 0.42;
-      pointer-events: none;
+      opacity: 0.7;
     }
     .item-title { font-weight: 650; margin-bottom: 4px; }
     .meta { color: var(--muted); font-size: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
@@ -122,6 +121,11 @@
     .badge.approved { background: var(--ok-bg); color: var(--ok); }
     .badge.pending { background: var(--pending-bg); color: var(--pending); }
     .badge.rejected { background: var(--danger-bg); color: var(--danger); }
+    .active-file {
+      border: 1px solid var(--accent);
+      background: #f0fdfa;
+    }
+    .active-file .item-title { margin-bottom: 0; }
     .empty { color: var(--muted); padding: 18px 8px; text-align: center; }
     .actions { display: flex; gap: 8px; flex-wrap: wrap; }
     .actions button { flex: 1; min-width: 120px; }
@@ -174,9 +178,15 @@
         </div>
       </div>
 
+      <div class="card active-file">
+        <div class="sub" style="margin-bottom:6px">Сейчас активен</div>
+        <div class="item-title" id="activeFileName">Выберите окно SketchUp или файл в списке</div>
+        <div class="meta" id="activeFileMeta"></div>
+      </div>
+
       <div class="card">
         <div class="sub" style="margin-bottom:8px">Открытые модели SketchUp</div>
-        <div class="meta" style="margin-bottom:8px">Чтобы выбрать другую модель, кликните её окно в SketchUp.</div>
+        <div class="meta" style="margin-bottom:8px">Кликните окно модели в SketchUp или строку в списке — плагин покажет активный файл. Само окно плагина одно, заново не открывается.</div>
         <div id="openList"></div>
         <button class="ghost" id="refreshOpenBtn" type="button">Обновить список окон</button>
       </div>
@@ -202,7 +212,8 @@
       fields: [],
       session: null,
       openModels: [],
-      selectedModelId: null
+      selectedModelId: null,
+      platform: null
     };
 
     const $ = (id) => document.getElementById(id);
@@ -216,17 +227,27 @@
       window.sketchup[name](typeof payload === 'string' ? payload : JSON.stringify(payload));
     }
 
+    function waitForSketchup(done, attempt) {
+      attempt = attempt || 0;
+      if (window.sketchup && typeof window.sketchup.ready === 'function') {
+        done();
+        return;
+      }
+      if (attempt >= 120) {
+        showBanner('error', 'Нет связи с SketchUp. Закройте это окно и откройте плагин снова.');
+        return;
+      }
+      setTimeout(function () { waitForSketchup(done, attempt + 1); }, 50);
+    }
+
     function setBusy(busy, name) {
       state.busy = busy;
       const disable = busy;
       ['loginBtn', 'logoutBtn', 'refreshBtn', 'openBtn', 'versionBtn', 'uploadBtn', 'refreshOpenBtn', 'contentType'].forEach((id) => {
         const el = $(id);
         if (!el) return;
-        if (id === 'openBtn' || id === 'versionBtn') {
-          el.disabled = disable || !state.selectedId;
-        } else {
-          el.disabled = disable;
-        }
+        if (id === 'openBtn' || id === 'versionBtn' || id === 'uploadBtn') return;
+        el.disabled = disable;
       });
       if (busy) {
         const labels = {
@@ -237,6 +258,7 @@
         };
         showBanner('ok', labels[name] || 'Выполняется запрос…');
       }
+      updateCatalogActions();
     }
 
     function showBanner(kind, text) {
@@ -252,6 +274,45 @@
 
     function selectedItem() {
       return state.items.find((item) => String(item.id) === String(state.selectedId)) || null;
+    }
+
+    function isDraft(item) {
+      const status = String((item && (item.status || item.catalogStatus)) || '').toLowerCase();
+      return status === 'draft' || status === 'черновик';
+    }
+
+    function activeOpenModel() {
+      const items = state.openModels || [];
+      return items.find((item) => item.active) || items.find((item) => String(item.objectId) === String(state.selectedModelId)) || null;
+    }
+
+    function updateCatalogActions() {
+      const item = selectedItem();
+      const openModel = activeOpenModel();
+      const openBtn = $('openBtn');
+      const versionBtn = $('versionBtn');
+      const uploadBtn = $('uploadBtn');
+      if (openBtn) {
+        openBtn.disabled = state.busy || !state.selectedId;
+        openBtn.textContent = isDraft(item) ? 'Открыть для редактирования' : 'Открыть для просмотра';
+      }
+      if (versionBtn) {
+        const fromCatalog = !!(item && !isDraft(item));
+        const fromOpenView = !!(openModel && openModel.catalogMode === 'view' && openModel.catalogGroupId);
+        versionBtn.disabled = state.busy || (!fromCatalog && !fromOpenView);
+      }
+      if (uploadBtn) {
+        if (openModel && openModel.catalogMode === 'edit') {
+          uploadBtn.textContent = 'Сохранить в каталог';
+          uploadBtn.disabled = state.busy;
+        } else if (openModel && openModel.catalogMode === 'view') {
+          uploadBtn.textContent = 'Сохранить в каталог';
+          uploadBtn.disabled = true;
+        } else {
+          uploadBtn.textContent = 'Отправить как новый документ';
+          uploadBtn.disabled = state.busy;
+        }
+      }
     }
 
     function badgeClass(status) {
@@ -296,10 +357,11 @@
         el.addEventListener('click', () => {
           state.selectedId = el.getAttribute('data-id');
           $('openBtn').disabled = state.busy;
-          $('versionBtn').disabled = state.busy;
           renderList();
+          updateCatalogActions();
         });
       });
+      updateCatalogActions();
     }
 
     function looksLikeFsPath(value) {
@@ -324,14 +386,28 @@
       const items = state.openModels || [];
       if (!items.length) {
         root.innerHTML = '<div class="empty">SketchUp не отдал открытые модели. Кликните окно модели и нажмите «Обновить список окон».</div>';
+        if ($('activeFileName')) $('activeFileName').textContent = 'Нет активного файла';
+        if ($('activeFileMeta')) $('activeFileMeta').textContent = '';
         return;
       }
-      const activeItem = items.find((item) => item.active) || items[0];
+      const activeItem = items.find((item) => item.active) || items.find((item) => String(item.objectId) === String(state.selectedModelId)) || items[0];
       state.selectedModelId = String(activeItem.objectId);
       root.innerHTML = items.map((item) => {
         const isActive = !!item.active;
         const klass = 'item' + (isActive ? ' active' : ' inactive');
-        const badge = isActive ? '<span class="badge approved">активна</span>' : '<span class="badge">фон</span>';
+        let badge;
+        if (isActive) {
+          badge = '<span class="badge approved">активна</span>';
+        } else if (item.local === false) {
+          badge = '<span class="badge">другое окно</span>';
+        } else {
+          badge = '<span class="badge">фон</span>';
+        }
+        if (item.catalogMode === 'edit') {
+          badge += '<span class="badge pending">черновик</span>';
+        } else if (item.catalogMode === 'view') {
+          badge += '<span class="badge">просмотр</span>';
+        }
         const modified = item.modified ? 'изменённая' : 'без изменений';
         return (
           '<div class="' + klass + '" data-oid="' + item.objectId + '">' +
@@ -344,7 +420,31 @@
           '</div>'
         );
       }).join('');
+      root.querySelectorAll('#openList .item').forEach((el) => {
+        el.addEventListener('click', () => {
+          const oid = el.getAttribute('data-oid');
+          if (!oid) return;
+          state.selectedModelId = oid;
+          state.openModels.forEach((item) => {
+            item.active = String(item.objectId) === String(oid);
+          });
+          renderOpenModels();
+          callRuby('activate_model', String(oid));
+        });
+      });
       setModelName(shortModelName(activeItem.name));
+      const nameEl = $('activeFileName');
+      const metaEl = $('activeFileMeta');
+      if (nameEl) nameEl.textContent = shortModelName(activeItem.name || 'Модель');
+      if (metaEl) {
+        const bits = [];
+        if (activeItem.catalogMode === 'edit') bits.push('черновик, можно сохранить в каталог');
+        else if (activeItem.catalogMode === 'view') bits.push('просмотр');
+        if (activeItem.modified) bits.push('есть изменения');
+        bits.push((activeItem.entities || 0) + ' объектов');
+        metaEl.textContent = bits.join(' · ');
+      }
+      updateCatalogActions();
     }
 
     function fieldCode(field) {
@@ -554,6 +654,7 @@
       onEvent: function (event, payload) {
         payload = payload || {};
         if (event === 'boot') {
+          state.platform = payload.platform || state.platform;
           $('email').value = payload.email || '';
           $('apiBase').value = payload.apiBase || '';
           $('headerSub').textContent = 'v' + (payload.version || '') + ' · ' + (payload.email || 'сессия');
@@ -622,6 +723,7 @@
             $('versionBtn').disabled = true;
           }
           renderList();
+          updateCatalogActions();
           showBanner('ok', 'Найдено моделей: ' + state.items.length);
           return;
         }
@@ -630,10 +732,27 @@
           return;
         }
         if (event === 'opened') {
-          showBanner('ok', 'Файл сохранён и открыт: ' + (payload.filename || ''));
+          if (payload.alreadyOpen) {
+            showBanner('ok', 'Файл уже открыт, окно активировано: ' + (payload.filename || ''));
+          } else if (payload.mode === 'edit') {
+            showBanner('ok', 'Черновик открыт для редактирования: ' + (payload.filename || '') + '. Сохраните его обратно в каталог.');
+          } else if (payload.mode === 'view') {
+            showBanner('ok', 'Открыто для просмотра: ' + (payload.filename || '') + '. Чтобы сделать копию, нажмите «Новая версия».');
+          } else {
+            showBanner('ok', 'Файл открыт: ' + (payload.filename || ''));
+          }
+          updateCatalogActions();
           return;
         }
         if (event === 'uploaded') {
+          if (payload.delegated) {
+            showBanner('ok', 'Выбранное окно активировано, модель отправляется из него.');
+            return;
+          }
+          if (payload.mode === 'update') {
+            showBanner('ok', 'Черновик сохранён в каталог: ' + (payload.filename || ''));
+            return;
+          }
           showBanner('ok', (payload.mode === 'version' ? 'Новая версия отправлена: ' : 'Модель отправлена: ') + (payload.filename || ''));
         }
       }
@@ -655,30 +774,58 @@
     });
     $('search').addEventListener('input', renderList);
     $('openBtn').addEventListener('click', () => {
-      if (state.selectedId) callRuby('open_item', String(state.selectedId));
+      if (!state.selectedId) return;
+      const item = selectedItem() || {};
+      callRuby('open_item', {
+        id: state.selectedId,
+        name: item.name || '',
+        status: item.status || '',
+        groupId: item.groupId || item.id || ''
+      });
     });
     $('uploadBtn').addEventListener('click', () => {
-      const missing = requiredFieldLabels();
-      if (missing.length) {
-        showBanner('error', 'Заполните обязательные поля: ' + missing.join(', '));
+      const openModel = activeOpenModel();
+      if (openModel && openModel.catalogMode === 'view') {
+        showBanner('error', 'Этот файл открыт только для просмотра. Чтобы сделать копию в каталоге, нажмите «Новая версия».');
         return;
       }
-      callRuby('upload_new', collectUploadValues());
-    });
-    $('versionBtn').addEventListener('click', () => {
-      const item = selectedItem();
-      if (!item) return;
       const missing = requiredFieldLabels();
       if (missing.length) {
         showBanner('error', 'Заполните обязательные поля: ' + missing.join(', '));
         return;
       }
       const values = collectUploadValues();
-      values.groupId = item.groupId || item.id;
+      if (openModel && openModel.catalogMode === 'edit' && openModel.catalogContentId) {
+        values.saveMode = 'update';
+        values.catalogContentId = openModel.catalogContentId;
+        values.catalogGroupId = openModel.catalogGroupId;
+      }
+      callRuby('upload_new', values);
+    });
+    $('versionBtn').addEventListener('click', () => {
+      const item = selectedItem();
+      const openModel = activeOpenModel();
+      if (item && isDraft(item) && !(openModel && openModel.catalogMode === 'view')) {
+        showBanner('error', 'Черновик не дублируется. Откройте его для редактирования и нажмите «Сохранить в каталог».');
+        return;
+      }
+      const groupId = (item && !isDraft(item) && (item.groupId || item.id)) ||
+        (openModel && openModel.catalogGroupId);
+      if (!groupId) {
+        showBanner('error', 'Выберите в каталоге файл не в статусе «Черновик».');
+        return;
+      }
+      const missing = requiredFieldLabels();
+      if (missing.length) {
+        showBanner('error', 'Заполните обязательные поля: ' + missing.join(', '));
+        return;
+      }
+      const values = collectUploadValues();
+      values.groupId = groupId;
       callRuby('upload_version', values);
     });
 
-    callRuby('ready');
+    waitForSketchup(function () { callRuby('ready'); });
   </script>
 </body>
 </html>

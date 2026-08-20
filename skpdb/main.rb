@@ -12,7 +12,7 @@ module Constrtodo
   module SkpDb
 
     def self.open_window
-      AppWindow.show
+      AppWindow.show_shared
     end
 
     def self.create_toolbar
@@ -22,25 +22,41 @@ module Constrtodo
       cmd.tooltip = PLUGIN_NAME
       cmd.status_bar_text = 'Получить или отправить модель SketchUp через ConstrTodo'
       cmd.menu_text = 'Открыть…'
-      small, large = toolbar_icons
-      cmd.small_icon = small if small
-      cmd.large_icon = large if large
+      apply_command_icons!(cmd)
       toolbar.add_item(cmd)
       toolbar.restore
+      toolbar.show
       toolbar
     end
 
-    def self.toolbar_icons
-      images = File.join(MODULE_PATH, 'images')
-      mac = defined?(Sketchup) && Sketchup.respond_to?(:platform) && Sketchup.platform == :platform_osx
-      small_name = mac ? 'tb_skpdb_32.png' : 'tb_skpdb_24.png'
-      large_name = mac ? 'tb_skpdb_64.png' : 'tb_skpdb_32.png'
-      small = File.join(images, small_name)
-      large = File.join(images, large_name)
-      small = nil unless File.exist?(small)
-      large = nil unless File.exist?(large)
-      [small, large]
+    def self.apply_command_icons!(cmd)
+      icon = icon_file('skpdb_icon.png')
+      win_png = icon_file('toolbar_win.png')
+      small_png = icon_file('toolbar_24.png')
+      large_png = icon_file('toolbar_32.png')
+
+      chosen = if File.exist?(icon)
+                 icon
+               elsif !osx? && File.exist?(win_png)
+                 win_png
+               elsif File.exist?(large_png)
+                 large_png
+               elsif File.exist?(small_png)
+                 small_png
+               end
+      return unless chosen
+
+      cmd.small_icon = chosen
+      cmd.large_icon = chosen
+    rescue StandardError
+      nil
     end
+    private_class_method :apply_command_icons!
+
+    def self.icon_file(name)
+      File.join(ICONS_PATH, name).tr('\\', '/')
+    end
+    private_class_method :icon_file
 
     unless file_loaded?(__FILE__)
       UI.menu('Plugins').add_item("#{PLUGIN_NAME}…") { open_window }

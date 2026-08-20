@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect x="2" y="2" width="124" height="124" rx="28" ry="28" fill="#035450"/>
+  <g fill="#FFFFFF" font-family="Arial Black, Segoe UI, Arial, sans-serif" font-weight="900" text-anchor="middle">
+    <text x="64" y="58" font-size="42" letter-spacing="-1.5">skp</text>
+    <text x="64" y="104" font-size="42" letter-spacing="0.5">dB</text>
+  </g>
+</svg>

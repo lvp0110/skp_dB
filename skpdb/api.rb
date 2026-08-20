@@ -118,11 +118,10 @@ module Constrtodo
           ok: true,
           contentType: content_type,
           fields: fields,
-          csrf: csrf_debug,
           error: nil
         }
       rescue StandardError => e
-        { ok: false, contentType: content_type, fields: [], csrf: csrf_debug, error: e.message }
+        { ok: false, contentType: content_type, fields: [], error: e.message }
       end
 
       def resolved_form_fields(context = nil)
@@ -177,6 +176,30 @@ module Constrtodo
         unwrap(response[:body])
       end
 
+      def update_content(content_id, fields)
+        refresh_csrf!
+        last_error = nil
+        [
+          [:put, "content/#{content_id}"],
+          [:post, "content/#{content_id}"],
+          [:post, "content/update/#{content_id}"]
+        ].each do |method, path|
+          response = if method == :put
+                       client.put_form(path, with_csrf(fields))
+                     else
+                       client.post_form(path, with_csrf(fields))
+                     end
+          persist_session!
+          return unwrap(response[:body]) if success?(response)
+
+          last_error = upload_error_message(response, fields)
+          code = response[:code].to_i
+          next if [404, 405, 501].include?(code)
+          break
+        end
+        raise last_error || "Не удалось сохранить черновик #{content_id} в каталог"
+      end
+
       def refresh_csrf!
         response = client.get('auth/session')
         persist_session!
@@ -196,16 +219,6 @@ module Constrtodo
         raise 'Нет CSRF-токена в cookie. Выйдите и войдите снова.' if token.empty?
 
         fields
-      end
-
-      def csrf_debug
-        {
-          hasToken: !client.csrf_token.empty?,
-          tokenLength: client.csrf_token.length,
-          cookieNames: client.cookies.keys
-        }
-      rescue StandardError
-        { hasToken: false, tokenLength: 0, cookieNames: [] }
       end
 
       def content_type

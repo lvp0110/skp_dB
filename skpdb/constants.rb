@@ -3,10 +3,24 @@ module Constrtodo
 
     PLUGIN_ID = 'ConstrtodoSkpDb'.freeze
     PLUGIN_NAME = 'ConstrTodo SKP'.freeze
-    VERSION = '1.1.1'.freeze
+    VERSION = '1.1.8'.freeze
+    USER_DATA_DIR_NAME = 'ConstrTodoSKP'.freeze
 
     MODULE_PATH = File.dirname(__FILE__).freeze
     HTML_PATH = File.join(MODULE_PATH, 'html', 'index.html').freeze
+    ICONS_PATH = File.join(MODULE_PATH, 'icons').freeze
+
+    def self.osx?
+      if defined?(Sketchup.platform)
+        Sketchup.platform == :platform_osx
+      else
+        !!(RUBY_PLATFORM.to_s =~ /darwin/i)
+      end
+    end
+
+    def self.platform_code
+      osx? ? 'osx' : 'win'
+    end
 
     DEFAULT_API_ORIGIN = 'https://content.constrtodo.ru'.freeze
     DEFAULT_API_BASE = "#{DEFAULT_API_ORIGIN}/api".freeze
@@ -32,7 +46,7 @@ module Constrtodo
 
     FILE_FIELD_TYPES = %w[file file_dwg file_pdf file_dxf file_skp].freeze
     NAME_FIELD_CODES = %w[name title header filename file_name model_name].freeze
-    SKIP_UPLOAD_KEYS = %w[modelObjectId objectId groupId group_id].freeze
+    SKIP_UPLOAD_KEYS = %w[modelObjectId objectId groupId group_id catalogContentId catalogGroupId catalogStatus catalogMode saveMode].freeze
     FIELD_CODE_ALIASES = {
       'constr_code' => %w[construction_code construction constr ConstrCode constrCode]
     }.freeze
