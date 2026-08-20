@@ -35,10 +35,11 @@ module Constrtodo
                           raise "Не получена форма типа #{Api.content_type}: #{e.message}"
                         end
         model = resolve_model(values['modelObjectId'] || values['objectId'])
-        path = save_current_model(values['name'] || values[:name], model: model)
-        log("saved #{path} (#{File.size(path)} bytes) schema=#{fields_schema.map { |f| field_code(f) }.join(',')}")
+        sent_name = upload_name(values, model)
+        filename = display_filename(sent_name)
+        path = save_current_model(sent_name, model: model)
+        log("saved #{path} as #{filename} (#{File.size(path)} bytes) schema=#{fields_schema.map { |f| field_code(f) }.join(',')}")
         binary = File.binread(path)
-        filename = display_filename(values['name'] || values[:name] || ModelIndex.display_name(model))
 
         form = build_form(fields_schema, values, filename: filename, data: binary)
         log("form keys: #{form.keys.join(', ')} scalars=#{Api.scalar_field_keys(form).join(',')}")
@@ -48,13 +49,14 @@ module Constrtodo
                    Api.create_version(group_id, form)
                  end
         log("upload ok: #{result.inspect[0, 300]}")
+        renamed = rename_sent_model!(model, filename)
 
         {
           ok: true,
           contentId: result_id(result, 'content_id', 'id'),
           groupId: result_id(result, 'group_id') || group_id,
           filename: filename,
-          path: path
+          path: renamed || path
         }
       end
 
@@ -75,9 +77,9 @@ module Constrtodo
         return fallback_model_name if model.nil?
 
         names = []
-        names << model.title.to_s.strip
+        names << ModelIndex.human_name(model.title.to_s, model.path.to_s)
         path = model.path.to_s.strip
-        names << File.basename(path, '.*') unless path.empty?
+        names << File.basename(path, '.*') unless path.empty? || ModelIndex.temp_path?(path)
 
         sel = model.selection
         if sel && sel.length == 1 && sel.first.respond_to?(:definition)
@@ -102,12 +104,33 @@ module Constrtodo
         Time.now.strftime('Модель %Y-%m-%d %H-%M')
       end
 
+      def upload_name(values, model)
+        NAME_FIELD_CODES.each do |code|
+          value = values[code].to_s.strip
+          next if value.empty? || placeholder_name?(value) || looks_like_path?(value)
+
+          return ModelIndex.basename_if_path(value)
+        end
+        ModelIndex.display_name(model)
+      end
+
+      def looks_like_path?(value)
+        text = value.to_s
+        text.include?('/var/folders/') || text.include?('constrtodo_skpdb') || text.start_with?('/') && text.downcase.end_with?('.skp')
+      end
+
       def save_current_model(name = nil, model: nil)
         model ||= Sketchup.active_model
         raise 'Нет активной модели SketchUp' if model.nil?
 
-        dest = File.join(work_dir, "upload_#{Time.now.to_i}.skp")
-        File.delete(dest) if File.exist?(dest)
+        filename = display_filename(name)
+        dest = File.join(work_dir, filename)
+        current = model.path.to_s
+        if !current.empty? && File.exist?(current) && same_path?(current, dest)
+          model.save if model.respond_to?(:modified?) && model.modified?
+          return current if File.size(current) > 50
+        end
+        dest = unique_path(dest) if File.exist?(dest)
 
         saved = try_save_copy(model, dest)
         saved ||= try_copy_existing(model, dest)
@@ -118,6 +141,48 @@ module Constrtodo
         end
 
         dest
+      end
+
+      def rename_sent_model!(model, filename)
+        return nil if model.nil?
+
+        current = model.path.to_s
+        return current unless current.empty? || ModelIndex.temp_path?(current)
+
+        dest = File.join(work_dir, File.basename(filename))
+        dest = unique_path(dest) if File.exist?(dest) && !same_path?(current, dest)
+        return current if !current.empty? && same_path?(current, dest)
+
+        saved = false
+        saved = model.save(dest) if model.respond_to?(:save)
+        log("rename sent model #{current.inspect} -> #{dest} saved=#{saved}")
+        return dest if saved && File.exist?(dest)
+
+        current
+      rescue StandardError => e
+        log("rename sent model: #{e.message}")
+        nil
+      end
+
+      def same_path?(left, right)
+        File.expand_path(left.to_s) == File.expand_path(right.to_s)
+      rescue StandardError
+        left.to_s == right.to_s
+      end
+
+      def unique_path(path)
+        return path unless File.exist?(path)
+
+        dir = File.dirname(path)
+        ext = File.extname(path)
+        base = File.basename(path, ext)
+        index = 2
+        loop do
+          candidate = File.join(dir, "#{base} #{index}#{ext}")
+          return candidate unless File.exist?(candidate)
+
+          index += 1
+        end
       end
 
       def try_save_copy(model, dest)

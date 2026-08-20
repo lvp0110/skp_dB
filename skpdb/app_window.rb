@@ -17,10 +17,10 @@ module Constrtodo
           return
         end
 
-        style = if defined?(UI::HtmlDialog::STYLE_DIALOG)
-                  UI::HtmlDialog::STYLE_DIALOG
-                else
+        style = if defined?(UI::HtmlDialog::STYLE_WINDOW)
                   UI::HtmlDialog::STYLE_WINDOW
+                else
+                  UI::HtmlDialog::STYLE_DIALOG
                 end
 
         @dialog = UI::HtmlDialog.new(
@@ -109,8 +109,10 @@ module Constrtodo
             data = parse_json(json)
             result = Transfer.upload_current(data)
             load_list({})
+            push_open_models
+            push('modelName', { name: result[:filename].to_s.sub(/\.skp\z/i, '') })
             push('uploaded', result.merge(mode: 'create'))
-            Sketchup.status_text = 'ConstrTodo: модель отправлена'
+            Sketchup.status_text = "ConstrTodo: отправлен #{result[:filename]}"
             result
           end
         end
@@ -123,8 +125,10 @@ module Constrtodo
 
             result = Transfer.upload_current(data, group_id: group_id)
             load_list({})
+            push_open_models
+            push('modelName', { name: result[:filename].to_s.sub(/\.skp\z/i, '') })
             push('uploaded', result.merge(mode: 'version'))
-            Sketchup.status_text = 'ConstrTodo: новая версия отправлена'
+            Sketchup.status_text = "ConstrTodo: новая версия #{result[:filename]}"
             result
           end
         end

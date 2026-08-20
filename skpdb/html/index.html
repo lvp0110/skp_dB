@@ -103,6 +103,11 @@
       background: #fff;
     }
     .item.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.15); }
+    #openList .item { cursor: default; }
+    #openList .item.inactive {
+      opacity: 0.42;
+      pointer-events: none;
+    }
     .item-title { font-weight: 650; margin-bottom: 4px; }
     .meta { color: var(--muted); font-size: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
     .badge {
@@ -128,7 +133,7 @@
   <header>
     <div>
       <h1>ConstrTodo SKP</h1>
-      <div class="sub" id="headerSub">v1.0.5 · модели материалов</div>
+      <div class="sub" id="headerSub">v1.1.1 · модели материалов</div>
     </div>
     <button class="ghost hidden" id="logoutBtn" type="button">Выйти</button>
   </header>
@@ -171,13 +176,13 @@
 
       <div class="card">
         <div class="sub" style="margin-bottom:8px">Открытые модели SketchUp</div>
+        <div class="meta" style="margin-bottom:8px">Чтобы выбрать другую модель, кликните её окно в SketchUp.</div>
         <div id="openList"></div>
         <button class="ghost" id="refreshOpenBtn" type="button">Обновить список окон</button>
       </div>
 
       <div class="card">
         <div class="sub" style="margin-bottom:8px">Отправить выбранную модель</div>
-        <div class="sub" id="formMeta" style="margin-bottom:8px"></div>
         <label>Приватность</label>
         <select id="privacyGroup">
           <option value="public" selected>Публичный</option>
@@ -297,6 +302,23 @@
       });
     }
 
+    function looksLikeFsPath(value) {
+      const text = String(value || '');
+      return text.indexOf('/var/folders/') >= 0 ||
+        text.indexOf('constrtodo_skpdb') >= 0 ||
+        text.indexOf('/T/com.sketchup') >= 0 ||
+        text.indexOf('\\Temp\\') >= 0 ||
+        /^(\/|[A-Za-z]:\\)/.test(text);
+    }
+
+    function shortModelName(value) {
+      const text = String(value || '');
+      if (!looksLikeFsPath(text)) return text;
+      const parts = text.split(/[\\/]/);
+      const base = parts[parts.length - 1] || text;
+      return base.replace(/\.skp$/i, '');
+    }
+
     function renderOpenModels() {
       const root = $('openList');
       const items = state.openModels || [];
@@ -304,33 +326,25 @@
         root.innerHTML = '<div class="empty">SketchUp не отдал открытые модели. Кликните окно модели и нажмите «Обновить список окон».</div>';
         return;
       }
-      if (!state.selectedModelId) {
-        const active = items.find((item) => item.active);
-        state.selectedModelId = String((active || items[0]).objectId);
-      }
+      const activeItem = items.find((item) => item.active) || items[0];
+      state.selectedModelId = String(activeItem.objectId);
       root.innerHTML = items.map((item) => {
-        const active = String(item.objectId) === String(state.selectedModelId) ? ' active' : '';
-        const badge = item.active ? '<span class="badge approved">активна</span>' : '<span class="badge">фон</span>';
+        const isActive = !!item.active;
+        const klass = 'item' + (isActive ? ' active' : ' inactive');
+        const badge = isActive ? '<span class="badge approved">активна</span>' : '<span class="badge">фон</span>';
         const modified = item.modified ? 'изменённая' : 'без изменений';
         return (
-          '<div class="item' + active + '" data-oid="' + item.objectId + '">' +
-            '<div class="item-title">' + escapeHtml(item.name || ('Модель ' + item.objectId)) + '</div>' +
+          '<div class="' + klass + '" data-oid="' + item.objectId + '">' +
+            '<div class="item-title">' + escapeHtml(shortModelName(item.name || ('Модель ' + item.objectId))) + '</div>' +
             '<div class="meta">' + badge +
               '<span>' + escapeHtml(modified) + '</span>' +
               '<span>' + escapeHtml(String(item.entities || 0)) + ' объектов</span>' +
             '</div>' +
-            (item.path ? '<div class="meta">' + escapeHtml(item.path) + '</div>' : '') +
+            (item.path && !looksLikeFsPath(item.path) ? '<div class="meta">' + escapeHtml(item.path) + '</div>' : '') +
           '</div>'
         );
       }).join('');
-      root.querySelectorAll('.item').forEach((el) => {
-        el.addEventListener('click', () => {
-          state.selectedModelId = el.getAttribute('data-oid');
-          const selected = items.find((item) => String(item.objectId) === String(state.selectedModelId));
-          if (selected) setModelName(selected.name);
-          renderOpenModels();
-        });
-      });
+      setModelName(shortModelName(activeItem.name));
     }
 
     function fieldCode(field) {
@@ -362,7 +376,7 @@
           '<div class="empty">Форма типа не получена. Проверьте CSRF и нажмите «Обновить».</div>' +
           '<label for="uploadName">Название</label>' +
           '<input id="uploadName" type="text" placeholder="Имя модели">' +
-          '<label for="f-constr_code">Код конструкции <span class="meta">(constr_code, обязательное)</span> *</label>' +
+          '<label for="f-constr_code">Код конструкции</label>' +
           '<input id="f-constr_code" data-code="constr_code" type="text" placeholder="Код конструкции">';
         return;
       }
@@ -371,15 +385,10 @@
         const type = fieldType(field);
         const required = fieldRequired(field) || code === 'constr_code';
         const req = required ? ' required' : '';
-        const label = escapeHtml(fieldName(field)) +
-          ' <span class="meta">(' + escapeHtml(code || 'без кода') +
-          ' · ' + escapeHtml(type) +
-          (required ? ', обязательное' : '') + ')</span>' +
-          (required ? ' *' : '');
+        const label = escapeHtml(fieldName(field));
         if (isFileField(field)) {
           return '<label>' + label + '</label>' +
-            '<div class="meta" style="margin-bottom:10px">Сюда уйдёт .skp выбранной открытой модели. ' +
-            (field.accept ? 'accept: ' + escapeHtml(field.accept) : '') + '</div>';
+            '<div class="meta" style="margin-bottom:10px">Сюда уйдёт .skp выбранной открытой модели.</div>';
         }
         if (type === 'list' || type === 'multiple_list') {
           const multiple = type === 'multiple_list' ? ' multiple' : '';
@@ -489,7 +498,8 @@
     }
 
     function setModelName(name) {
-      if (!name || isPlaceholderName(name)) return;
+      name = shortModelName(name);
+      if (!name || isPlaceholderName(name) || looksLikeFsPath(name)) return;
       nameInputs().forEach((el) => {
         if (el.tagName === 'SELECT') return;
         if (isPlaceholderName(el.value)) el.value = name;
@@ -519,13 +529,13 @@
           const typed = fallback ? String(fallback.value || '').trim() : '';
           empty = !selected && !typed;
         }
-        if (empty) missing.push(fieldName(field) + ' [' + code + ']');
+        if (empty) missing.push(fieldName(field));
       });
       const constr = document.querySelector('#uploadFields [data-code="constr_code"]');
       const constrFallback = document.querySelector('#uploadFields [data-fallback="constr_code"]');
       const constrValue = ((constr && constr.value) || (constrFallback && constrFallback.value) || '').trim();
-      if (!constrValue && missing.every((item) => item.indexOf('[constr_code]') < 0)) {
-        missing.push('Код конструкции [constr_code]');
+      if (!constrValue && missing.indexOf('Код конструкции') < 0 && missing.every((item) => item !== 'Код конструкции')) {
+        missing.push('Код конструкции');
       }
       const named = $('uploadName');
       if (named && !named.value.trim()) missing.push('Название');
@@ -582,9 +592,11 @@
         }
         if (event === 'openModels') {
           state.openModels = payload.items || [];
+          const active = state.openModels.find((item) => item.active);
+          if (active) state.selectedModelId = String(active.objectId);
           renderOpenModels();
           const selected = state.openModels.find((item) => String(item.objectId) === String(state.selectedModelId));
-          if (selected) setModelName(selected.name);
+          if (selected) setModelName(shortModelName(selected.name));
           return;
         }
         if (event === 'form') {
@@ -592,12 +604,6 @@
           state.fields = payload.fields || [];
           renderUploadFields();
           restoreUploadValues(prev);
-          const meta = $('formMeta');
-          const csrf = payload.csrf || {};
-          meta.textContent = 'Тип: ' + (payload.contentType || '—') +
-            ' · полей: ' + state.fields.length +
-            ' · CSRF: ' + (csrf.hasToken ? ('есть (' + csrf.tokenLength + ' симв.)') : 'нет') +
-            (csrf.cookieNames && csrf.cookieNames.length ? ' · cookie: ' + csrf.cookieNames.join(', ') : '');
           callRuby('model_name');
           if (!payload.ok && payload.error) {
             showBanner('error', 'Форма типа: ' + payload.error);
@@ -628,7 +634,7 @@
           return;
         }
         if (event === 'uploaded') {
-          showBanner('ok', payload.mode === 'version' ? 'Новая версия отправлена' : 'Модель отправлена в ConstrTodo');
+          showBanner('ok', (payload.mode === 'version' ? 'Новая версия отправлена: ' : 'Модель отправлена: ') + (payload.filename || ''));
         }
       }
     };

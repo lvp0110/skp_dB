@@ -61,11 +61,10 @@ module Constrtodo
 
       def summary(model, active = nil)
         active ||= Sketchup.active_model
-        path = model.path.to_s
         {
           objectId: model.object_id,
           name: display_name(model),
-          path: path,
+          path: display_path(model),
           active: !!(active && model.object_id == active.object_id),
           modified: model.respond_to?(:modified?) ? !!model.modified? : false,
           entities: model.entities.count
@@ -83,12 +82,48 @@ module Constrtodo
       end
 
       def display_name(model)
-        title = model.title.to_s.strip
+        human_name(model.title.to_s, model.path.to_s, model.entities.count)
+      end
+
+      def display_path(model)
         path = model.path.to_s.strip
-        base = path.empty? ? '' : File.basename(path, '.*')
-        name = title.empty? || title.downcase == 'untitled' ? base : title
-        name = "Без имени (#{model.entities.count} объектов)" if name.empty?
+        return '' if path.empty? || temp_path?(path)
+
+        path
+      end
+
+      def human_name(title, path = '', entity_count = 0)
+        file_base = path.to_s.strip.empty? ? '' : File.basename(path, '.*')
+        title_base = basename_if_path(title)
+        name = placeholder_title?(title_base) ? file_base : title_base
+        name = file_base if name.empty?
+        name = "Без имени (#{entity_count} объектов)" if name.empty?
         name
+      end
+
+      def basename_if_path(text)
+        value = text.to_s.strip
+        return value if value.empty?
+        return File.basename(value.tr('\\', '/'), '.*') if value.include?('/') || value.include?('\\')
+
+        value
+      end
+
+      def temp_path?(path)
+        text = path.to_s
+        return true if text.empty?
+        return true if text.include?('constrtodo_skpdb')
+        return true if text.include?('/var/folders/')
+        return true if text.include?('\\Temp\\') || text.include?('/Temp/')
+
+        temp = Sketchup.temp_dir.to_s
+        !temp.empty? && text.start_with?(temp)
+      rescue StandardError
+        false
+      end
+
+      def placeholder_title?(name)
+        %w[untitled untitled.skp sketchup model без имени новая модель].include?(name.to_s.strip.downcase)
       end
 
       class Observer < Sketchup::AppObserver
