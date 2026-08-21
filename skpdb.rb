@@ -7,7 +7,7 @@ module Constrtodo
     unless file_loaded?(__FILE__)
       ex = SketchupExtension.new('ConstrTodo SKP', 'skpdb/main')
       ex.description = 'Получение и отправка моделей SketchUp через ConstrTodo.'
-      ex.version     = '1.1.11'
+      ex.version     = '1.1.12'
       ex.copyright   = 'ConstrTodo'
       ex.creator     = 'SKP dB'
       Sketchup.register_extension(ex, true)

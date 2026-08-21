@@ -41,6 +41,8 @@
       justify-content: space-between;
       gap: 8px;
     }
+    .header-actions { display: flex; gap: 6px; align-items: center; flex: 0 0 auto; }
+    .header-actions button { flex: 0 0 auto; min-width: 0; padding: 6px 10px; }
     h1 { margin: 0; font-size: 15px; font-weight: 650; }
     .sub { color: var(--muted); font-size: 12px; }
     .wrap { padding: 12px 14px 16px; overflow: auto; flex: 1; }
@@ -219,6 +221,36 @@
       font-weight: 700;
     }
     .chip-x:hover { color: var(--danger); background: transparent; }
+    details.upload-details { margin-bottom: 10px; }
+    details.upload-details > summary {
+      cursor: pointer;
+      color: var(--text);
+      font-weight: 650;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 2px 0 8px;
+    }
+    details.upload-details > summary::-webkit-details-marker { display: none; }
+    details.upload-details > summary::after {
+      content: "▸";
+      color: var(--muted);
+      font-weight: 400;
+    }
+    details.upload-details[open] > summary::after { content: "▾"; }
+    body.compact header { padding: 8px 10px; }
+    body.compact header h1 { font-size: 13px; }
+    body.compact #headerSub { display: none; }
+    body.compact #logoutBtn { display: none !important; }
+    body.compact .wrap { padding: 8px 10px 10px; }
+    body.compact #appView > .card { display: none; }
+    body.compact #activeFileCard,
+    body.compact #uploadCard { display: block; margin-bottom: 8px; padding: 10px; }
+    body.compact #uploadDetails { display: none; }
+    body.compact #activeFileMeta { display: none; }
+    body.compact #activeFileCard .sub { margin-bottom: 2px; }
   </style>
 </head>
 <body>
@@ -227,7 +259,10 @@
       <h1>ConstrTodo SKP</h1>
       <div class="sub" id="headerSub">v1.1.1 · модели материалов</div>
     </div>
-    <button class="ghost hidden" id="logoutBtn" type="button">Выйти</button>
+    <div class="header-actions">
+      <button class="ghost hidden" id="compactBtn" type="button">Свернуть</button>
+      <button class="ghost hidden" id="logoutBtn" type="button">Выйти</button>
+    </div>
   </header>
   <div class="wrap">
     <div id="banner" class="banner"></div>
@@ -266,7 +301,7 @@
         </div>
       </div>
 
-      <div class="card active-file">
+      <div class="card active-file" id="activeFileCard">
         <div class="sub" style="margin-bottom:6px">Сейчас активен</div>
         <div class="item-title" id="activeFileName">Выберите окно SketchUp или файл в списке</div>
         <div class="meta" id="activeFileMeta"></div>
@@ -279,14 +314,16 @@
         <button class="ghost" id="refreshOpenBtn" type="button">Обновить список окон</button>
       </div>
 
-      <div class="card">
-        <div class="sub" style="margin-bottom:8px">Отправить выбранную модель</div>
-        <label>Приватность</label>
-        <select id="privacyGroup">
-          <option value="public" selected>Публичный</option>
-          <option value="private">Приватный</option>
-        </select>
-        <div id="uploadFields"></div>
+      <div class="card" id="uploadCard">
+        <details class="upload-details" id="uploadDetails">
+          <summary>Метки и поля отправки</summary>
+          <label>Приватность</label>
+          <select id="privacyGroup">
+            <option value="public" selected>Публичный</option>
+            <option value="private">Приватный</option>
+          </select>
+          <div id="uploadFields"></div>
+        </details>
         <button id="uploadBtn" type="button">Отправить как новый документ</button>
       </div>
     </section>
@@ -1037,6 +1074,38 @@
       $('loginView').classList.toggle('hidden', loggedIn);
       $('appView').classList.toggle('hidden', !loggedIn);
       $('logoutBtn').classList.toggle('hidden', !loggedIn);
+      if ($('compactBtn')) $('compactBtn').classList.toggle('hidden', !loggedIn);
+      if (!loggedIn) document.body.classList.remove('compact');
+    }
+
+    function readFlag(key, fallback) {
+      try {
+        const raw = window.localStorage.getItem(key);
+        if (raw == null) return fallback;
+        return raw === '1';
+      } catch (err) {
+        return fallback;
+      }
+    }
+
+    function writeFlag(key, value) {
+      try { window.localStorage.setItem(key, value ? '1' : '0'); } catch (err) {}
+    }
+
+    function applyCompact(compact) {
+      compact = !!compact;
+      document.body.classList.toggle('compact', compact);
+      const btn = $('compactBtn');
+      if (btn) btn.textContent = compact ? 'Развернуть' : 'Свернуть';
+      writeFlag('skpdb_compact', compact);
+      if (compact && typeof closeCombos === 'function') closeCombos();
+      callRuby('set_window_mode', { compact: compact });
+    }
+
+    function revealUploadForm() {
+      const details = $('uploadDetails');
+      if (details) details.open = true;
+      if (document.body.classList.contains('compact')) applyCompact(false);
     }
 
     function requiredFieldLabels() {
@@ -1102,6 +1171,7 @@
           if (payload.ok) {
             $('headerSub').textContent = 'v' + (payload.version || '') + ' · ' + (payload.email || 'сессия');
             showBanner('ok', 'Вход выполнен');
+            if (readFlag('skpdb_compact', false)) applyCompact(true);
           } else if (payload.error) {
             showBanner('error', payload.error);
           }
@@ -1202,6 +1272,17 @@
       });
     });
     $('logoutBtn').addEventListener('click', () => callRuby('logout'));
+    if ($('compactBtn')) {
+      $('compactBtn').addEventListener('click', () => {
+        applyCompact(!document.body.classList.contains('compact'));
+      });
+    }
+    if ($('uploadDetails')) {
+      $('uploadDetails').open = readFlag('skpdb_upload_open', false);
+      $('uploadDetails').addEventListener('toggle', () => {
+        writeFlag('skpdb_upload_open', $('uploadDetails').open);
+      });
+    }
     $('refreshBtn').addEventListener('click', () => callRuby('refresh', {}));
     $('refreshOpenBtn').addEventListener('click', () => callRuby('refresh_open_models'));
     $('contentType').addEventListener('change', () => {
@@ -1243,6 +1324,7 @@
       }
       const missing = requiredFieldLabels();
       if (missing.length) {
+        revealUploadForm();
         showBanner('error', 'Заполните обязательные поля: ' + missing.join(', '));
         return;
       }
@@ -1269,6 +1351,7 @@
       }
       const missing = requiredFieldLabels();
       if (missing.length) {
+        revealUploadForm();
         showBanner('error', 'Заполните обязательные поля: ' + missing.join(', '));
         return;
       }

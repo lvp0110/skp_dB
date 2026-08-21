@@ -13,6 +13,8 @@ module Constrtodo
       @stacked_hwnd = nil
       @stacked_pid = nil
       @html_mtime = nil
+      @compact = false
+      @expanded_size = nil
 
       module_function
 
@@ -55,8 +57,8 @@ module Constrtodo
           resizable: true,
           width: 520,
           height: 740,
-          min_width: 420,
-          min_height: 520,
+          min_width: 280,
+          min_height: 120,
           style: style
         )
 
@@ -69,6 +71,7 @@ module Constrtodo
           @stacked_hwnd = nil
           @stacked_pid = nil
           @html_mtime = nil
+          @compact = false
           release_host!
         end
         @dialog.show
@@ -701,8 +704,60 @@ module Constrtodo
         dialog.add_action_callback('model_name') do
           push_model_name
         end
+
+        dialog.add_action_callback('set_window_mode') do |_ctx, json|
+          data = parse_json(json)
+          compact = data['compact'] == true || data['compact'].to_s == 'true' || data['compact'].to_s == '1'
+          apply_window_mode!(compact)
+        end
       end
       private_class_method :register_callbacks
+
+      def apply_window_mode!(compact)
+        return unless @dialog
+
+        compact = !!compact
+        if compact
+          @expanded_size = current_dialog_size unless @compact
+          @compact = true
+          @dialog.set_size(360, 220)
+        else
+          @compact = false
+          width, height = @expanded_size
+          width = 520 if width.to_i < 280
+          height = 740 if height.to_i < 200
+          @dialog.set_size(width, height)
+        end
+        keep_on_top!
+      rescue StandardError => e
+        puts "[SkpDb] set_window_mode: #{e.message}"
+        nil
+      end
+      private_class_method :apply_window_mode!
+
+      def current_dialog_size
+        hwnd = dialog_hwnd.to_i
+        if hwnd > 0 && !::Constrtodo::SkpDb.osx?
+          require 'fiddle'
+          user32 = Fiddle.dlopen('user32.dll')
+          fn = Fiddle::Function.new(
+            user32['GetWindowRect'],
+            [Fiddle::TYPE_VOIDP, Fiddle::TYPE_VOIDP],
+            Fiddle::TYPE_INT
+          )
+          rect = Fiddle::Pointer.malloc(16)
+          if fn.call(Fiddle::Pointer.new(hwnd), rect).to_i != 0
+            left, top, right, bottom = rect[0, 16].unpack('l4')
+            width = right - left
+            height = bottom - top
+            return [width, height] if width > 120 && height > 80
+          end
+        end
+        [520, 740]
+      rescue StandardError
+        [520, 740]
+      end
+      private_class_method :current_dialog_size
 
       def push_open_models
         return unless visible?

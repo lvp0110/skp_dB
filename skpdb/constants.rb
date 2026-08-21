@@ -3,7 +3,7 @@ module Constrtodo
 
     PLUGIN_ID = 'ConstrtodoSkpDb'.freeze
     PLUGIN_NAME = 'ConstrTodo SKP'.freeze
-    VERSION = '1.1.11'.freeze
+    VERSION = '1.1.12'.freeze
     USER_DATA_DIR_NAME = 'ConstrTodoSKP'.freeze
 
     MODULE_PATH = File.dirname(__FILE__).freeze
