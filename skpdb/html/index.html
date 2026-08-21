@@ -131,6 +131,94 @@
     .actions button { flex: 1; min-width: 120px; }
     .hidden { display: none !important; }
     details summary { cursor: pointer; color: var(--muted); }
+    .combo { position: relative; margin-bottom: 10px; }
+    .combo-toggle {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      background: #fff;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      text-align: left;
+      font-weight: 400;
+      min-height: 38px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    .combo-toggle:hover { background: #fff; }
+    .combo.open .combo-toggle {
+      outline: 2px solid rgba(15, 118, 110, 0.25);
+      border-color: var(--accent);
+    }
+    .combo.disabled .combo-toggle { opacity: 0.7; cursor: default; }
+    .combo.disabled { pointer-events: none; }
+    .combo-value { display: flex; flex-wrap: wrap; gap: 4px; flex: 1; min-width: 0; }
+    .combo-placeholder { color: var(--muted); font-weight: 400; }
+    .combo-caret { color: var(--muted); font-size: 11px; }
+    .combo-select {
+      position: absolute;
+      left: 0;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+      margin: 0;
+      padding: 0;
+      border: 0;
+    }
+    .combo-menu {
+      position: fixed;
+      z-index: 40;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
+      max-height: 240px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .combo-search {
+      margin: 8px 8px 0;
+      width: calc(100% - 16px);
+    }
+    .combo-options { overflow: auto; max-height: 190px; padding: 4px 0 8px; }
+    .combo-option {
+      padding: 8px 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .combo-option:hover { background: #f0fdfa; }
+    .combo-option.selected { background: #ecfdf3; color: var(--ok); font-weight: 650; }
+    .combo-empty { color: var(--muted); padding: 12px; text-align: center; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: var(--draft-bg);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 1px 8px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .chip-x {
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      padding: 0 0 0 2px;
+      font-size: 14px;
+      line-height: 1;
+      cursor: pointer;
+      font-weight: 700;
+    }
+    .chip-x:hover { color: var(--danger); background: transparent; }
   </style>
 </head>
 <body>
@@ -213,7 +301,9 @@
       session: null,
       openModels: [],
       selectedModelId: null,
-      platform: null
+      platform: null,
+      formValuesByModel: {},
+      lastAppliedModelId: null
     };
 
     const $ = (id) => document.getElementById(id);
@@ -342,6 +432,9 @@
       }
       root.innerHTML = items.map((item) => {
         const active = String(item.id) === String(state.selectedId) ? ' active' : '';
+        const labelChips = normalizeCodes(item.labels).map((code) => {
+          return '<span class="chip">' + escapeHtml(optionNameByCode(code)) + '</span>';
+        }).join('');
         return (
           '<div class="item' + active + '" data-id="' + item.id + '">' +
             '<div class="item-title">' + escapeHtml(item.name || ('Документ ' + item.id)) + '</div>' +
@@ -350,6 +443,7 @@
               '<span>' + escapeHtml(formatDate(item.updatedAt)) + '</span>' +
               '<span>' + escapeHtml(item.updatedBy || '') + '</span>' +
             '</div>' +
+            (labelChips ? '<div class="meta" style="margin-top:6px">' + labelChips + '</div>' : '') +
           '</div>'
         );
       }).join('');
@@ -445,6 +539,7 @@
         metaEl.textContent = bits.join(' · ');
       }
       updateCatalogActions();
+      applyModelLabels();
     }
 
     function fieldCode(field) {
@@ -466,6 +561,361 @@
     function isFileField(field) {
       const type = fieldType(field);
       return ['file', 'file_dwg', 'file_pdf', 'file_dxf', 'file_skp'].indexOf(type) >= 0;
+    }
+
+    function isLabelsCode(code) {
+      const text = String(code || '').toLowerCase();
+      return text === 'labels' || text === 'label' || text === 'tags' || text === 'tag' || text.indexOf('метк') >= 0;
+    }
+
+    function labelsFieldCode() {
+      const fields = state.fields || [];
+      const named = fields.find((field) => isLabelsCode(fieldCode(field)));
+      if (named) return fieldCode(named);
+      const byTitle = fields.find((field) => {
+        const name = fieldName(field).toLowerCase();
+        return name.indexOf('метк') >= 0 || name === 'labels' || name === 'tags';
+      });
+      if (byTitle) return fieldCode(byTitle);
+      const multi = fields.find((field) => fieldType(field) === 'multiple_list');
+      return multi ? fieldCode(multi) : '';
+    }
+
+    function optionNameByCode(code) {
+      const wanted = String(code || '');
+      const fields = state.fields || [];
+      for (let i = 0; i < fields.length; i++) {
+        const found = fieldOptions(fields[i]).find((opt) => opt.code === wanted);
+        if (found) return found.name;
+      }
+      return wanted;
+    }
+
+    function normalizeCodes(raw) {
+      if (raw == null || raw === '') return [];
+      let list = raw;
+      if (typeof raw === 'string') list = raw.split(/[,;]/);
+      else if (!Array.isArray(raw)) list = [raw];
+      const codes = [];
+      list.forEach((item) => {
+        if (item == null || item === '') return;
+        if (typeof item === 'object') {
+          const code = item.code || item.Code || item.id || item.value || item.key || item.name;
+          if (code) codes.push(String(code).trim());
+          return;
+        }
+        const text = String(item).trim();
+        if (text) codes.push(text);
+      });
+      return codes.filter((code, index) => codes.indexOf(code) === index);
+    }
+
+    function fieldOptions(field) {
+      return (field.options || []).map((opt) => ({
+        code: String(opt.code || opt.Code || opt.id || opt.value || ''),
+        name: String(opt.name || opt.Name || opt.title || opt.code || opt.Code || '')
+      })).filter((opt) => opt.code);
+    }
+
+    function isMultiListField(field) {
+      return fieldType(field) === 'multiple_list' || isLabelsCode(fieldCode(field));
+    }
+
+    function labelsEditable() {
+      const model = activeOpenModel();
+      if (!model || !model.catalogMode) return true;
+      return model.catalogMode === 'edit';
+    }
+
+    function catalogLabelsFor(model) {
+      if (!model || !model.catalogMode) return [];
+      const fromBind = normalizeCodes(model.catalogLabels);
+      if (fromBind.length) return fromBind;
+      if (state.pendingCatalogLabels && state.pendingCatalogLabels.length) {
+        return state.pendingCatalogLabels;
+      }
+      const item = (state.items || []).find((row) =>
+        String(row.id) === String(model.catalogContentId) ||
+        (row.groupId && String(row.groupId) === String(model.catalogGroupId))
+      );
+      return normalizeCodes(item && item.labels);
+    }
+
+    function fieldSelect(code) {
+      return document.querySelector('#uploadFields select[data-code="' + code + '"]');
+    }
+
+    function getSelectCodes(select) {
+      if (!select) return [];
+      if (select.multiple) {
+        return Array.from(select.selectedOptions).map((opt) => opt.value).filter(Boolean);
+      }
+      return select.value ? [select.value] : [];
+    }
+
+    function ensureSelectOption(select, code, name) {
+      if (!select || !code) return;
+      const label = name || optionNameByCode(code) || String(code);
+      const exists = Array.from(select.options).some((opt) => opt.value === String(code));
+      if (!exists) {
+        const extra = document.createElement('option');
+        extra.value = String(code);
+        extra.textContent = label;
+        select.appendChild(extra);
+      }
+      const combo = select.closest('.combo');
+      if (!combo) return;
+      const root = combo.querySelector('.combo-options');
+      if (!root) return;
+      if (!root.querySelector('.combo-option[data-value="' + String(code).replace(/"/g, '') + '"]')) {
+        const empty = root.querySelector('.combo-empty');
+        if (empty) empty.parentNode.removeChild(empty);
+        const option = document.createElement('div');
+        option.className = 'combo-option';
+        option.setAttribute('data-value', String(code));
+        option.setAttribute('role', 'option');
+        option.innerHTML = '<span>' + escapeHtml(label) + '</span>';
+        root.appendChild(option);
+      }
+    }
+
+    function resolveLabelCode(code) {
+      const wanted = String(code || '');
+      const field = (state.fields || []).find((item) => fieldCode(item) === labelsFieldCode());
+      const opts = field ? fieldOptions(field) : [];
+      const byCode = opts.find((opt) => opt.code === wanted);
+      if (byCode) return byCode.code;
+      const byName = opts.find((opt) => opt.name === wanted);
+      if (byName) return byName.code;
+      return wanted;
+    }
+
+    function setSelectCodes(select, codes) {
+      if (!select) return;
+      const fieldCodeName = select.getAttribute('data-code');
+      let wanted = normalizeCodes(codes);
+      if (isLabelsCode(fieldCodeName) || fieldCodeName === labelsFieldCode()) {
+        wanted = wanted.map(resolveLabelCode);
+      }
+      wanted.forEach((code) => ensureSelectOption(select, code));
+      if (select.multiple) {
+        Array.from(select.options).forEach((opt) => {
+          opt.selected = wanted.indexOf(opt.value) >= 0;
+        });
+      } else {
+        select.value = wanted[0] || '';
+      }
+    }
+
+    function rememberFieldValue(code) {
+      const model = activeOpenModel();
+      const id = model ? String(model.objectId) : 'none';
+      const select = fieldSelect(code);
+      if (!select) return;
+      state.formValuesByModel[id] = state.formValuesByModel[id] || {};
+      state.formValuesByModel[id][code] = getSelectCodes(select);
+    }
+
+    function applyModelLabels() {
+      const code = labelsFieldCode();
+      const select = fieldSelect(code);
+      if (!code || !select) return;
+      const model = activeOpenModel();
+      const id = model ? String(model.objectId) : 'none';
+      const saved = state.formValuesByModel[id] && state.formValuesByModel[id][code];
+      const fromCatalog = catalogLabelsFor(model);
+      const switched = state.lastAppliedModelId !== id;
+      const combo = select.closest('.combo');
+      if (combo) {
+        combo.classList.toggle('disabled', isLabelsCode(code) && !labelsEditable());
+      }
+      if (switched) {
+        state.lastAppliedModelId = id;
+        setSelectCodes(select, saved || fromCatalog);
+        syncCombo(select.closest('.combo'));
+        return;
+      }
+      if (!saved && fromCatalog.length && getSelectCodes(select).length === 0) {
+        setSelectCodes(select, fromCatalog);
+      }
+      syncCombo(select.closest('.combo'));
+    }
+
+    function closeCombos(except) {
+      document.querySelectorAll('.combo.open').forEach((combo) => {
+        if (combo === except) return;
+        combo.classList.remove('open');
+        const menu = combo.querySelector('.combo-menu');
+        if (menu) menu.classList.add('hidden');
+      });
+    }
+
+    function placeComboMenu(combo) {
+      const toggle = combo.querySelector('.combo-toggle');
+      const menu = combo.querySelector('.combo-menu');
+      if (!toggle || !menu) return;
+      const rect = toggle.getBoundingClientRect();
+      menu.style.left = rect.left + 'px';
+      menu.style.width = Math.max(rect.width, 220) + 'px';
+      const spaceBelow = window.innerHeight - rect.bottom;
+      if (spaceBelow < 180 && rect.top > spaceBelow) {
+        menu.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+        menu.style.top = 'auto';
+      } else {
+        menu.style.top = (rect.bottom + 4) + 'px';
+        menu.style.bottom = 'auto';
+      }
+    }
+
+    function openCombo(combo) {
+      if (!combo || combo.classList.contains('disabled')) return;
+      closeCombos(combo);
+      combo.classList.add('open');
+      const menu = combo.querySelector('.combo-menu');
+      if (menu) menu.classList.remove('hidden');
+      placeComboMenu(combo);
+      const search = combo.querySelector('.combo-search');
+      if (search) {
+        search.value = '';
+        filterCombo(combo, '');
+        setTimeout(() => { try { search.focus(); } catch (e) {} }, 0);
+      }
+    }
+
+    function filterCombo(combo, query) {
+      const q = String(query || '').trim().toLowerCase();
+      combo.querySelectorAll('.combo-option').forEach((opt) => {
+        const text = opt.textContent.toLowerCase();
+        opt.style.display = !q || text.indexOf(q) >= 0 ? '' : 'none';
+      });
+    }
+
+    function syncCombo(combo) {
+      if (!combo) return;
+      const select = combo.querySelector('select');
+      const valueEl = combo.querySelector('.combo-value');
+      if (!select || !valueEl) return;
+      const multiple = combo.getAttribute('data-multiple') === '1';
+      const selected = Array.from(select.selectedOptions).filter((opt) => opt.value);
+      combo.querySelectorAll('.combo-option').forEach((opt) => {
+        const on = selected.some((item) => item.value === opt.getAttribute('data-value'));
+        opt.classList.toggle('selected', on);
+      });
+      if (!selected.length) {
+        valueEl.innerHTML = '<span class="combo-placeholder">' + (multiple ? 'Не выбрано' : 'Выберите…') + '</span>';
+        return;
+      }
+      if (multiple) {
+        const canEdit = !combo.classList.contains('disabled');
+        valueEl.innerHTML = selected.map((opt) => {
+          return '<span class="chip" data-value="' + escapeHtml(opt.value) + '">' +
+            escapeHtml(opt.textContent) +
+            (canEdit ? '<button type="button" class="chip-x" tabindex="-1">×</button>' : '') +
+          '</span>';
+        }).join('');
+      } else {
+        valueEl.textContent = selected[0].textContent;
+      }
+    }
+
+    function toggleComboValue(combo, code) {
+      if (combo.classList.contains('disabled')) return;
+      const select = combo.querySelector('select');
+      if (!select || !code) return;
+      const multiple = combo.getAttribute('data-multiple') === '1';
+      if (multiple) {
+        const current = getSelectCodes(select);
+        const next = current.indexOf(code) >= 0
+          ? current.filter((item) => item !== code)
+          : current.concat([code]);
+        setSelectCodes(select, next);
+        syncCombo(combo);
+        rememberFieldValue(select.getAttribute('data-code'));
+        return;
+      }
+      setSelectCodes(select, [code]);
+      syncCombo(combo);
+      rememberFieldValue(select.getAttribute('data-code'));
+      closeCombos();
+      if (!isLabelsCode(select.getAttribute('data-code'))) {
+        callRuby('refresh_form', collectUploadValues());
+      }
+    }
+
+    function bindCombos(root) {
+      root.querySelectorAll('.combo').forEach((combo) => {
+        syncCombo(combo);
+        const toggle = combo.querySelector('.combo-toggle');
+        const search = combo.querySelector('.combo-search');
+        if (toggle) {
+          toggle.addEventListener('mousedown', (event) => {
+            event.preventDefault();
+          });
+          toggle.addEventListener('click', (event) => {
+            if (event.target.closest('.chip-x')) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (combo.classList.contains('open')) closeCombos();
+            else openCombo(combo);
+          });
+        }
+        combo.addEventListener('click', (event) => {
+          const x = event.target.closest('.chip-x');
+          if (x) {
+            event.preventDefault();
+            event.stopPropagation();
+            const chip = x.closest('.chip');
+            if (chip) toggleComboValue(combo, chip.getAttribute('data-value'));
+            return;
+          }
+          const option = event.target.closest('.combo-option');
+          if (!option) return;
+          event.preventDefault();
+          event.stopPropagation();
+          toggleComboValue(combo, option.getAttribute('data-value'));
+        });
+        combo.addEventListener('mousedown', (event) => {
+          if (event.target.closest('.combo-option') || event.target.closest('.combo-menu')) {
+            event.preventDefault();
+          }
+        });
+        if (search) {
+          search.addEventListener('click', (event) => event.stopPropagation());
+          search.addEventListener('input', () => filterCombo(combo, search.value));
+        }
+      });
+    }
+
+    function renderComboField(field) {
+      const code = fieldCode(field);
+      const multiple = isMultiListField(field);
+      const required = fieldRequired(field) || code === 'constr_code';
+      const req = required ? ' required' : '';
+      const options = fieldOptions(field);
+      const opts = options.map((opt) => {
+        return '<option value="' + escapeHtml(opt.code) + '">' + escapeHtml(opt.name) + '</option>';
+      }).join('');
+      const items = options.map((opt) => {
+        return '<div class="combo-option" data-value="' + escapeHtml(opt.code) + '" role="option">' +
+          '<span>' + escapeHtml(opt.name) + '</span></div>';
+      }).join('');
+      const extra = multiple
+        ? ''
+        : '<input data-fallback="' + escapeHtml(code) + '" type="text" placeholder="или введите код вручную">';
+      return '<label>' + escapeHtml(fieldName(field)) + '</label>' +
+        '<div class="combo" data-multiple="' + (multiple ? '1' : '0') + '">' +
+          '<div class="combo-toggle" role="button" tabindex="0">' +
+            '<span class="combo-value"></span><span class="combo-caret">▾</span>' +
+          '</div>' +
+          '<div class="combo-menu hidden" role="listbox">' +
+            '<input type="text" class="combo-search" placeholder="Поиск…">' +
+            '<div class="combo-options">' + (items || '<div class="combo-empty">Нет вариантов</div>') + '</div>' +
+          '</div>' +
+          '<select id="f-' + escapeHtml(code) + '" class="combo-select" data-code="' + escapeHtml(code) + '"' +
+            req + (multiple ? ' multiple' : '') + '>' +
+            (multiple ? '' : '<option value="">—</option>') + opts +
+          '</select>' +
+        '</div>' + extra;
     }
 
     function renderUploadFields() {
@@ -490,19 +940,8 @@
           return '<label>' + label + '</label>' +
             '<div class="meta" style="margin-bottom:10px">Сюда уйдёт .skp выбранной открытой модели.</div>';
         }
-        if (type === 'list' || type === 'multiple_list') {
-          const multiple = type === 'multiple_list' ? ' multiple' : '';
-          const options = (field.options || []).map((opt) => {
-            const optCode = opt.code || opt.Code || '';
-            const optName = opt.name || opt.Name || optCode;
-            return '<option value="' + escapeHtml(optCode) + '">' + escapeHtml(optName) + '</option>';
-          }).join('');
-          const extra = type === 'list'
-            ? '<input data-fallback="' + escapeHtml(code) + '" type="text" placeholder="или введите код вручную">'
-            : '';
-          return '<label for="f-' + escapeHtml(code) + '">' + label + '</label>' +
-            '<select id="f-' + escapeHtml(code) + '" data-code="' + escapeHtml(code) + '"' + req + multiple + '>' +
-            (multiple ? '' : '<option value="">—</option>') + options + '</select>' + extra;
+        if (type === 'list' || type === 'multiple_list' || isLabelsCode(code)) {
+          return renderComboField(field);
         }
         if (type === 'text_area') {
           return '<label for="f-' + escapeHtml(code) + '">' + label + '</label>' +
@@ -512,11 +951,7 @@
         return '<label for="f-' + escapeHtml(code) + '">' + label + '</label>' +
           '<input id="f-' + escapeHtml(code) + '" data-code="' + escapeHtml(code) + '" type="' + inputType + '"' + req + '>';
       }).join('');
-      root.querySelectorAll('select[data-code]').forEach((el) => {
-        el.addEventListener('change', () => {
-          callRuby('refresh_form', collectUploadValues());
-        });
-      });
+      bindCombos(root);
     }
 
     function collectUploadValues() {
@@ -526,7 +961,7 @@
       };
       const named = $('uploadName');
       if (named) values.name = named.value.trim();
-      document.querySelectorAll('#uploadFields [data-code]').forEach((el) => {
+      document.querySelectorAll('#uploadFields select[data-code], #uploadFields input[data-code], #uploadFields textarea[data-code]').forEach((el) => {
         const code = el.getAttribute('data-code');
         if (!code) return;
         if (el.multiple) {
@@ -550,23 +985,14 @@
 
     function restoreUploadValues(values) {
       if (!values) return;
-      document.querySelectorAll('#uploadFields [data-code]').forEach((el) => {
+      document.querySelectorAll('#uploadFields select[data-code], #uploadFields input[data-code], #uploadFields textarea[data-code]').forEach((el) => {
         const code = el.getAttribute('data-code');
         const value = values[code];
         if (value == null || value === '') return;
         if (el.multiple && Array.isArray(value)) {
-          Array.from(el.options).forEach((opt) => {
-            opt.selected = value.indexOf(opt.value) >= 0;
-          });
+          setSelectCodes(el, value);
         } else if (el.tagName === 'SELECT') {
-          el.value = value;
-          if (el.value !== String(value) && value) {
-            const extra = document.createElement('option');
-            extra.value = value;
-            extra.textContent = value;
-            extra.selected = true;
-            el.appendChild(extra);
-          }
+          setSelectCodes(el, value);
         } else {
           el.value = value;
         }
@@ -576,6 +1002,7 @@
         const select = document.querySelector('#uploadFields [data-code="' + code + '"]');
         if ((!select || !select.value) && values[code]) el.value = values[code];
       });
+      document.querySelectorAll('#uploadFields .combo').forEach(syncCombo);
     }
 
     function isPlaceholderName(value) {
@@ -619,7 +1046,7 @@
         if (!code || code === 'privacy_group' || isFileField(field)) return;
         const required = fieldRequired(field) || code === 'constr_code';
         if (!required) return;
-        const el = document.querySelector('#uploadFields [data-code="' + code + '"]');
+        const el = document.querySelector('#uploadFields select[data-code="' + code + '"], #uploadFields input[data-code="' + code + '"], #uploadFields textarea[data-code="' + code + '"]');
         const fallback = document.querySelector('#uploadFields [data-fallback="' + code + '"]');
         let empty = true;
         if (el && el.multiple) {
@@ -705,6 +1132,8 @@
           state.fields = payload.fields || [];
           renderUploadFields();
           restoreUploadValues(prev);
+          applyModelLabels();
+          if (state.items.length) renderList();
           callRuby('model_name');
           if (!payload.ok && payload.error) {
             showBanner('error', 'Форма типа: ' + payload.error);
@@ -724,6 +1153,7 @@
           }
           renderList();
           updateCatalogActions();
+          applyModelLabels();
           showBanner('ok', 'Найдено моделей: ' + state.items.length);
           return;
         }
@@ -741,6 +1171,11 @@
           } else {
             showBanner('ok', 'Файл открыт: ' + (payload.filename || ''));
           }
+          state.pendingCatalogLabels = normalizeCodes(payload.labels);
+          if (!payload.alreadyOpen) state.lastAppliedModelId = null;
+          const model = activeOpenModel();
+          if (model && state.pendingCatalogLabels.length) model.catalogLabels = state.pendingCatalogLabels;
+          applyModelLabels();
           updateCatalogActions();
           return;
         }
@@ -773,6 +1208,22 @@
       callRuby('set_content_type', $('contentType').value);
     });
     $('search').addEventListener('input', renderList);
+    document.addEventListener('click', (event) => {
+      if (event.target.closest('.combo')) return;
+      closeCombos();
+    });
+    document.addEventListener('scroll', () => {
+      document.querySelectorAll('.combo.open').forEach(placeComboMenu);
+    }, true);
+    window.addEventListener('resize', () => {
+      document.querySelectorAll('.combo.open').forEach(placeComboMenu);
+    });
+    const wrapEl = document.querySelector('.wrap');
+    if (wrapEl) {
+      wrapEl.addEventListener('scroll', () => {
+        document.querySelectorAll('.combo.open').forEach(placeComboMenu);
+      });
+    }
     $('openBtn').addEventListener('click', () => {
       if (!state.selectedId) return;
       const item = selectedItem() || {};
@@ -780,7 +1231,8 @@
         id: state.selectedId,
         name: item.name || '',
         status: item.status || '',
-        groupId: item.groupId || item.id || ''
+        groupId: item.groupId || item.id || '',
+        labels: item.labels || []
       });
     });
     $('uploadBtn').addEventListener('click', () => {

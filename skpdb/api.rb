@@ -459,8 +459,30 @@ module Constrtodo
           updatedBy: hash['updated_by'] || hash['updatedBy'],
           contentType: hash['content_type'] || hash['contentType'] || CONTENT_TYPE_CODE,
           privacyGroup: hash['privacy_group'] || hash['privacyGroup'],
-          labels: hash['labels'] || []
+          labels: normalize_item_labels(hash)
         }
+      end
+
+      private_class_method def self.normalize_item_labels(hash)
+        raw = hash['labels'] || hash['Labels'] || hash['tags'] || hash['tag']
+        list = case raw
+               when nil, ''
+                 []
+               when Array
+                 raw
+               when Hash
+                 raw['labels'] || raw['items'] || [raw]
+               else
+                 raw.to_s.split(/[,;]/)
+               end
+        list.flat_map do |item|
+          if item.is_a?(Hash)
+            h = stringify_keys(item)
+            [h['code'] || h['Code'] || h['id'] || h['value'] || h['key'] || h['name']]
+          else
+            [item]
+          end
+        end.map { |item| item.to_s.strip }.reject(&:empty?).uniq
       end
 
       private_class_method def self.stringify_keys(obj)

@@ -9,11 +9,13 @@ module Constrtodo
     module Transfer
       module_function
 
-      def open_content(content_id, catalog_name: nil, status: nil, group_id: nil)
+      def open_content(content_id, catalog_name: nil, status: nil, group_id: nil, labels: nil)
         content = Api.get_content(content_id)
         meta = content_meta(content, 'id' => content_id, 'status' => status, 'groupId' => group_id, 'name' => catalog_name)
+        labels = extract_labels(content, labels)
         existing = ModelIndex.window_for_content(meta[:id])
         if existing
+          ModelIndex.update_catalog_binding(meta[:id], 'labels' => labels, 'status' => meta[:status].to_s)
           ModelIndex.activate(existing[:objectId])
           log("open_content reuse window #{meta[:id]} #{existing[:objectId]}")
           return {
@@ -21,7 +23,8 @@ module Constrtodo
             alreadyOpen: true,
             filename: existing[:name] || meta[:name],
             mode: existing[:catalogMode] || (draft_status?(meta[:status]) ? 'edit' : 'view'),
-            status: meta[:status]
+            status: meta[:status],
+            labels: labels
           }
         end
 
@@ -41,7 +44,8 @@ module Constrtodo
           'status' => meta[:status].to_s,
           'mode' => writable ? 'edit' : 'view',
           'path' => File.expand_path(path),
-          'name' => filename.sub(/\.skp\z/i, '')
+          'name' => filename.sub(/\.skp\z/i, ''),
+          'labels' => labels
         }
         ModelIndex.bind_catalog(binding)
         log("open_content id=#{content_id} mode=#{binding['mode']} saved=#{path}")
@@ -53,7 +57,8 @@ module Constrtodo
           filename: filename,
           opened: opened,
           mode: binding['mode'],
-          status: meta[:status]
+          status: meta[:status],
+          labels: labels
         }
       end
 
@@ -334,6 +339,49 @@ module Constrtodo
           status: status,
           name: pick_catalog_name(fallbacks['name'], hash['name'], hash['title'], payload.is_a?(Hash) ? payload['name'] : nil)
         }
+      end
+
+      def extract_labels(content, extra = nil)
+        hash = stringify(content)
+        payload = hash['payload'] || hash['data'] || hash
+        payload = stringify(payload) if payload.is_a?(Hash)
+        extra_hash = extra.is_a?(Hash) ? stringify(extra) : nil
+        sources = [
+          extra,
+          extra_hash && extra_hash['labels'],
+          hash['labels'],
+          hash['Labels'],
+          hash['tags'],
+          payload.is_a?(Hash) ? payload['labels'] : nil,
+          payload.is_a?(Hash) ? payload['label'] : nil,
+          payload.is_a?(Hash) ? payload['tags'] : nil
+        ]
+        sources.each do |raw|
+          codes = normalize_label_codes(raw)
+          return codes unless codes.empty?
+        end
+        []
+      end
+
+      def normalize_label_codes(raw)
+        list = case raw
+               when nil, ''
+                 []
+               when Array
+                 raw
+               when Hash
+                 raw['labels'] || raw['label'] || raw['tags'] || raw['items'] || [raw]
+               else
+                 raw.to_s.split(/[,;]/)
+               end
+        list.flat_map do |item|
+          if item.is_a?(Hash)
+            h = stringify(item)
+            [h['code'] || h['Code'] || h['id'] || h['value'] || h['key'] || h['name']]
+          else
+            [item]
+          end
+        end.map { |item| item.to_s.strip }.reject(&:empty?).uniq
       end
 
       def draft_status?(status)
@@ -884,7 +932,10 @@ module Constrtodo
       end
 
       def blank?(value)
-        value.nil? || value.to_s.strip.empty?
+        return true if value.nil?
+        return value.empty? if value.is_a?(Array) || value.is_a?(Hash)
+
+        value.to_s.strip.empty?
       end
 
       def truthy?(value)

@@ -260,9 +260,26 @@ module Constrtodo
         item[:catalogGroupId] = bind['groupId']
         item[:catalogStatus] = bind['status']
         item[:catalogMode] = bind['mode']
+        item[:catalogLabels] = Array(bind['labels'])
         item
       end
       private_class_method :merge_catalog_fields!
+
+      def update_catalog_binding(content_id, attrs)
+        id = content_id.to_s
+        return if id.empty?
+
+        all = read_bindings
+        changed = false
+        all.each do |path, info|
+          next unless info.is_a?(Hash) && info['contentId'].to_s == id
+
+          all[path] = stringify_bind(info).merge(stringify_bind(attrs))
+          all[path]['updatedAt'] = Time.now.to_i
+          changed = true
+        end
+        write_bindings(all) if changed
+      end
 
       def stringify_bind(obj)
         return {} unless obj.is_a?(Hash)

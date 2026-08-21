@@ -3,7 +3,7 @@ module Constrtodo
 
     PLUGIN_ID = 'ConstrtodoSkpDb'.freeze
     PLUGIN_NAME = 'ConstrTodo SKP'.freeze
-    VERSION = '1.1.10'.freeze
+    VERSION = '1.1.11'.freeze
     USER_DATA_DIR_NAME = 'ConstrTodoSKP'.freeze
 
     MODULE_PATH = File.dirname(__FILE__).freeze
@@ -48,7 +48,8 @@ module Constrtodo
     NAME_FIELD_CODES = %w[name title header filename file_name model_name].freeze
     SKIP_UPLOAD_KEYS = %w[modelObjectId objectId groupId group_id catalogContentId catalogGroupId catalogStatus catalogMode saveMode].freeze
     FIELD_CODE_ALIASES = {
-      'constr_code' => %w[construction_code construction constr ConstrCode constrCode]
+      'constr_code' => %w[construction_code construction constr ConstrCode constrCode],
+      'labels' => %w[label tags tag метки]
     }.freeze
 
     STATUS_LABELS = {

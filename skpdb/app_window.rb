@@ -12,6 +12,7 @@ module Constrtodo
       @dialog_hwnd = nil
       @stacked_hwnd = nil
       @stacked_pid = nil
+      @html_mtime = nil
 
       module_function
 
@@ -28,6 +29,7 @@ module Constrtodo
       def show
         claim_host!
         if @dialog
+          reload_html_if_changed!
           @dialog.show unless @dialog.visible?
           @dialog.bring_to_front
           schedule_on_top!
@@ -66,6 +68,7 @@ module Constrtodo
           @dialog_hwnd = nil
           @stacked_hwnd = nil
           @stacked_pid = nil
+          @html_mtime = nil
           release_host!
         end
         @dialog.show
@@ -509,8 +512,27 @@ module Constrtodo
         html = File.read(HTML_PATH)
         html.force_encoding('UTF-8') if html.respond_to?(:force_encoding)
         dialog.set_html(html)
+        @html_mtime = html_mtime
       end
       private_class_method :load_html!
+
+      def html_mtime
+        File.mtime(HTML_PATH).to_i
+      rescue StandardError
+        0
+      end
+      private_class_method :html_mtime
+
+      def reload_html_if_changed!
+        return unless @dialog
+        return if @html_mtime.to_i == html_mtime
+
+        load_html!(@dialog)
+        UI.start_timer(0.25, false) { sync_boot if visible? }
+      rescue StandardError
+        nil
+      end
+      private_class_method :reload_html_if_changed!
 
       def host_file
         File.join(Session.user_data_dir, 'plugin_host.json')
@@ -626,7 +648,8 @@ module Constrtodo
               data['id'],
               catalog_name: data['name'],
               status: data['status'],
-              group_id: data['groupId'] || data['group_id']
+              group_id: data['groupId'] || data['group_id'],
+              labels: data['labels']
             )
             push('opened', result)
             push_open_models
