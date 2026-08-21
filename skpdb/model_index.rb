@@ -40,6 +40,7 @@ module Constrtodo
             sync_foreground_selection!
             publish!
             AppWindow.push_open_models
+            AppWindow.reassert_stack!
           end
         end
       end
@@ -361,15 +362,31 @@ module Constrtodo
       private_class_method :apply_selection!
 
       def sync_foreground_selection!
+        fg_hwnd = AppWindow.foreground_hwnd.to_i
+        return if fg_hwnd <= 0
+        return if AppWindow.plugin_hwnd?(fg_hwnd)
+
         fg = foreground_pid
         return if fg.nil? || fg <= 0
-        return if fg == Process.pid
+
+        if fg == Process.pid
+          model = @models.values.find { |item| alive?(item) }
+          @selected_id = model.object_id.to_s if model
+          unless AppWindow.stacked_pid == Process.pid
+            AppWindow.raise_model_window!(Process.pid, other_pids: known_pids, activate: false)
+          end
+          return
+        end
+
         return unless known_pid?(fg)
 
         entry = read_registry.find { |item| item['pid'].to_i == fg }
         return unless entry
 
         @selected_id = "ext:#{fg}:#{entry['objectId']}"
+        return if AppWindow.stacked_pid == fg
+
+        AppWindow.raise_model_window!(fg, other_pids: known_pids, activate: false)
       rescue StandardError
         nil
       end
@@ -381,11 +398,19 @@ module Constrtodo
       end
       private_class_method :known_pid?
 
+      def known_pids
+        pids = [Process.pid]
+        read_registry.each { |entry| pids << entry['pid'].to_i }
+        pids.select { |pid| pid > 0 }.uniq
+      end
+      private_class_method :known_pids
+
       def activate_os_window(pid, name)
         if ::Constrtodo::SkpDb.osx?
           activate_mac_window(name)
+          AppWindow.keep_on_top! if AppWindow.visible?
         else
-          activate_win_pid(pid, name)
+          AppWindow.raise_model_window!(pid, other_pids: known_pids, activate: true)
         end
       end
       private_class_method :activate_os_window

@@ -9,6 +9,9 @@ module Constrtodo
       PREF_KEY = 'constrtodo_skpdb_window'.freeze
 
       @dialog = nil
+      @dialog_hwnd = nil
+      @stacked_hwnd = nil
+      @stacked_pid = nil
 
       module_function
 
@@ -27,11 +30,17 @@ module Constrtodo
         if @dialog
           @dialog.show unless @dialog.visible?
           @dialog.bring_to_front
+          schedule_on_top!
+          raise_model_window!(Process.pid, activate: false)
           push_open_models
           return
         end
 
-        style = if defined?(UI::HtmlDialog::STYLE_WINDOW)
+        # Windows: STYLE_WINDOW, чтобы окно не пряталось при фокусе другого процесса SketchUp.
+        # Mac: STYLE_DIALOG держит плагин над окнами модели в одном процессе.
+        style = if ::Constrtodo::SkpDb.osx? && defined?(UI::HtmlDialog::STYLE_DIALOG)
+                  UI::HtmlDialog::STYLE_DIALOG
+                elsif defined?(UI::HtmlDialog::STYLE_WINDOW)
                   UI::HtmlDialog::STYLE_WINDOW
                 else
                   UI::HtmlDialog::STYLE_DIALOG
@@ -52,12 +61,449 @@ module Constrtodo
         load_html!(@dialog)
         register_callbacks(@dialog)
         @dialog.set_on_closed do
+          unstack_current_model!
           @dialog = nil
+          @dialog_hwnd = nil
+          @stacked_hwnd = nil
+          @stacked_pid = nil
           release_host!
         end
         @dialog.show
+        schedule_on_top!
         schedule_model_name!
+        UI.start_timer(0.35, false) { raise_model_window!(Process.pid, activate: false) if visible? }
       end
+
+      SWP_NOSIZE = 0x0001
+      SWP_NOMOVE = 0x0002
+      SWP_NOACTIVATE = 0x0010
+      SWP_SHOWWINDOW = 0x0040
+      HWND_TOPMOST = -1
+      HWND_NOTOPMOST = -2
+      SW_RESTORE = 9
+      GW_CHILD = 5
+      GW_HWNDNEXT = 2
+
+      def native_hwnd
+        return nil if ::Constrtodo::SkpDb.osx?
+
+        dialog_hwnd
+      end
+      module_function :native_hwnd
+
+      def plugin_hwnd?(hwnd)
+        plugin = native_hwnd.to_i
+        plugin > 0 && hwnd.to_i == plugin
+      end
+      module_function :plugin_hwnd?
+
+      def stacked_pid
+        @stacked_pid
+      end
+      module_function :stacked_pid
+
+      def foreground_hwnd
+        require 'fiddle'
+        user32 = Fiddle.dlopen('user32.dll')
+        fn = Fiddle::Function.new(user32['GetForegroundWindow'], [], Fiddle::TYPE_VOIDP)
+        hwnd = fn.call
+        hwnd.to_i
+      rescue StandardError
+        0
+      end
+      module_function :foreground_hwnd
+
+      def keep_on_top!
+        return unless visible?
+
+        if ::Constrtodo::SkpDb.osx?
+          @dialog.bring_to_front
+          return
+        end
+
+        hwnd = dialog_hwnd
+        return if hwnd.nil? || hwnd == 0
+
+        set_window_pos!(hwnd, HWND_TOPMOST, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
+      rescue StandardError => e
+        puts "[SkpDb] keep_on_top: #{e.message}"
+        nil
+      end
+      module_function :keep_on_top!
+
+      def raise_model_window!(pid, other_pids: [], activate: true)
+        return if ::Constrtodo::SkpDb.osx?
+        return unless visible?
+
+        pid = pid.to_i
+        return if pid <= 0
+
+        hwnds = model_hwnds_by_pid
+        hwnd = hwnds[pid].to_i
+        hwnd = fallback_hwnd_for_pid(pid).to_i if hwnd <= 0
+        hwnd = @stacked_hwnd.to_i if hwnd <= 0 && @stacked_pid == pid
+        return if hwnd <= 0
+
+        restore_window!(hwnd)
+
+        (Array(other_pids).map(&:to_i) + hwnds.keys).uniq.each do |other|
+          next if other == pid || other <= 0
+          other_hwnd = hwnds[other].to_i
+          next if other_hwnd <= 0 || other_hwnd == hwnd
+
+          set_window_pos!(other_hwnd, HWND_NOTOPMOST, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
+        end
+        if @stacked_hwnd && @stacked_hwnd != hwnd && window_alive?(@stacked_hwnd)
+          set_window_pos!(@stacked_hwnd, HWND_NOTOPMOST, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
+        end
+
+        activate_os_title(window_title(hwnd)) if activate
+        keep_on_top!
+        insert_below_plugin!(hwnd, activate: activate)
+        @stacked_hwnd = hwnd
+        @stacked_pid = pid
+
+        return unless activate
+
+        [0.05, 0.2, 0.6, 1.2].each do |delay|
+          UI.start_timer(delay, false) { reassert_stack! if visible? }
+        end
+      rescue StandardError => e
+        puts "[SkpDb] raise_model_window: #{e.message}"
+        nil
+      end
+      module_function :raise_model_window!
+
+      def reassert_stack!
+        keep_on_top!
+        return if ::Constrtodo::SkpDb.osx?
+
+        hwnd = @stacked_hwnd.to_i
+        if hwnd <= 0 || !window_alive?(hwnd)
+          if @stacked_pid.to_i > 0
+            hwnd = model_hwnds_by_pid[@stacked_pid].to_i
+            hwnd = fallback_hwnd_for_pid(@stacked_pid).to_i if hwnd <= 0
+          end
+          @stacked_hwnd = hwnd if hwnd > 0
+        end
+        return if hwnd <= 0
+
+        insert_below_plugin!(hwnd, activate: false)
+      rescue StandardError
+        nil
+      end
+      module_function :reassert_stack!
+
+      def schedule_on_top!
+        reassert_stack!
+        [0.15, 0.5, 1.2, 2.5].each do |delay|
+          UI.start_timer(delay, false) { reassert_stack! if visible? }
+        end
+      end
+      private_class_method :schedule_on_top!
+
+      def insert_below_plugin!(hwnd, activate: false)
+        plugin = native_hwnd.to_i
+        flags = SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW
+        flags |= SWP_NOACTIVATE unless activate
+        if plugin > 0 && plugin != hwnd.to_i
+          set_window_pos!(hwnd, plugin, flags)
+        else
+          set_window_pos!(hwnd, HWND_TOPMOST, flags)
+        end
+      end
+      private_class_method :insert_below_plugin!
+
+      def unstack_current_model!
+        return unless @stacked_hwnd && window_alive?(@stacked_hwnd)
+
+        set_window_pos!(@stacked_hwnd, HWND_NOTOPMOST, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
+      rescue StandardError
+        nil
+      end
+      private_class_method :unstack_current_model!
+
+      def set_window_pos!(hwnd, after, flags)
+        require 'fiddle'
+        user32 = Fiddle.dlopen('user32.dll')
+        fn = Fiddle::Function.new(
+          user32['SetWindowPos'],
+          [
+            Fiddle::TYPE_VOIDP, Fiddle::TYPE_VOIDP,
+            Fiddle::TYPE_INT, Fiddle::TYPE_INT, Fiddle::TYPE_INT, Fiddle::TYPE_INT,
+            Fiddle::TYPE_INT
+          ],
+          Fiddle::TYPE_INT
+        )
+        fn.call(Fiddle::Pointer.new(hwnd.to_i), Fiddle::Pointer.new(after.to_i), 0, 0, 0, 0, flags)
+      end
+      private_class_method :set_window_pos!
+
+      def restore_window!(hwnd)
+        return unless window_iconic?(hwnd)
+
+        require 'fiddle'
+        user32 = Fiddle.dlopen('user32.dll')
+        fn = Fiddle::Function.new(user32['ShowWindow'], [Fiddle::TYPE_VOIDP, Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+        fn.call(Fiddle::Pointer.new(hwnd.to_i), SW_RESTORE)
+      rescue StandardError
+        nil
+      end
+      private_class_method :restore_window!
+
+      def activate_os_title(title)
+        text = title.to_s.strip
+        return if text.empty?
+
+        require 'win32ole'
+        WIN32OLE.new('WScript.Shell').AppActivate(text)
+      rescue StandardError
+        nil
+      end
+      private_class_method :activate_os_title
+
+      def model_hwnds_by_pid
+        plugin = native_hwnd.to_i
+        best = {}
+        areas = {}
+        each_top_level_hwnd do |hwnd|
+          next if hwnd == plugin
+          next unless window_visible?(hwnd) || window_iconic?(hwnd)
+          next if dialog_title?(window_title(hwnd))
+          next if window_class(hwnd).to_s.include?('Chrome_WidgetWin')
+
+          pid = window_pid(hwnd)
+          next if pid <= 0
+
+          area = window_area(hwnd)
+          area = 1 if area <= 0 && window_iconic?(hwnd)
+          next if area <= 0
+          next if areas[pid] && areas[pid] >= area
+
+          best[pid] = hwnd
+          areas[pid] = area
+        end
+        best
+      end
+      private_class_method :model_hwnds_by_pid
+
+      def fallback_hwnd_for_pid(pid)
+        plugin = native_hwnd.to_i
+        best = 0
+        best_area = -1
+        each_top_level_hwnd do |hwnd|
+          next if hwnd == plugin
+          next if window_pid(hwnd) != pid
+          next unless window_visible?(hwnd) || window_iconic?(hwnd)
+          next if dialog_title?(window_title(hwnd))
+
+          area = window_area(hwnd)
+          area = 1 if area <= 0 && window_iconic?(hwnd)
+          next if area <= best_area
+
+          best = hwnd
+          best_area = area
+        end
+        best
+      end
+      private_class_method :fallback_hwnd_for_pid
+
+      def each_top_level_hwnd
+        require 'fiddle'
+        user32 = Fiddle.dlopen('user32.dll')
+        desktop = Fiddle::Function.new(user32['GetDesktopWindow'], [], Fiddle::TYPE_VOIDP)
+        get_window = Fiddle::Function.new(
+          user32['GetWindow'],
+          [Fiddle::TYPE_VOIDP, Fiddle::TYPE_INT],
+          Fiddle::TYPE_VOIDP
+        )
+        hwnd = get_window.call(desktop.call, GW_CHILD)
+        while hwnd && hwnd.to_i != 0
+          yield hwnd.to_i
+          hwnd = get_window.call(hwnd, GW_HWNDNEXT)
+        end
+      rescue StandardError
+        nil
+      end
+      private_class_method :each_top_level_hwnd
+
+      def window_class(hwnd)
+        require 'fiddle'
+        user32 = Fiddle.dlopen('user32.dll')
+        get_class = Fiddle::Function.new(
+          user32['GetClassNameW'],
+          [Fiddle::TYPE_VOIDP, Fiddle::TYPE_VOIDP, Fiddle::TYPE_INT],
+          Fiddle::TYPE_INT
+        )
+        buf = Fiddle::Pointer.malloc(512)
+        len = get_class.call(Fiddle::Pointer.new(hwnd.to_i), buf, 256).to_i
+        return '' if len <= 0
+
+        raw = buf.respond_to?(:to_str) ? buf.to_str(len * 2) : buf.to_s(len * 2)
+        raw.force_encoding('UTF-16LE').encode('UTF-8')
+      rescue StandardError
+        ''
+      end
+      private_class_method :window_class
+
+      def window_area(hwnd)
+        require 'fiddle'
+        user32 = Fiddle.dlopen('user32.dll')
+        fn = Fiddle::Function.new(
+          user32['GetWindowRect'],
+          [Fiddle::TYPE_VOIDP, Fiddle::TYPE_VOIDP],
+          Fiddle::TYPE_INT
+        )
+        rect = Fiddle::Pointer.malloc(16)
+        return 0 if fn.call(Fiddle::Pointer.new(hwnd.to_i), rect).to_i == 0
+
+        left, top, right, bottom = rect[0, 16].unpack('l4')
+        width = right - left
+        height = bottom - top
+        return 0 if width <= 0 || height <= 0
+
+        width * height
+      rescue StandardError
+        0
+      end
+      private_class_method :window_area
+
+      def window_iconic?(hwnd)
+        require 'fiddle'
+        user32 = Fiddle.dlopen('user32.dll')
+        fn = Fiddle::Function.new(user32['IsIconic'], [Fiddle::TYPE_VOIDP], Fiddle::TYPE_INT)
+        fn.call(Fiddle::Pointer.new(hwnd.to_i)).to_i != 0
+      rescue StandardError
+        false
+      end
+      private_class_method :window_iconic?
+
+      def dialog_hwnd
+        if @dialog_hwnd && @dialog_hwnd != 0 && window_alive?(@dialog_hwnd)
+          return @dialog_hwnd
+        end
+
+        found = find_dialog_hwnd
+        @dialog_hwnd = found if found && found != 0
+        @dialog_hwnd
+      end
+      private_class_method :dialog_hwnd
+
+      def find_dialog_hwnd
+        require 'fiddle'
+        user32 = Fiddle.dlopen('user32.dll')
+        find = Fiddle::Function.new(
+          user32['FindWindowW'],
+          [Fiddle::TYPE_VOIDP, Fiddle::TYPE_VOIDP],
+          Fiddle::TYPE_VOIDP
+        )
+        hwnd = find.call(0, utf16_ptr(TITLE))
+        hwnd_i = hwnd.to_i
+        return hwnd_i if hwnd_i != 0 && window_pid(hwnd_i) == Process.pid
+
+        walk_dialog_hwnd(user32)
+      rescue StandardError
+        nil
+      end
+      private_class_method :find_dialog_hwnd
+
+      def walk_dialog_hwnd(user32)
+        get_fore = Fiddle::Function.new(user32['GetForegroundWindow'], [], Fiddle::TYPE_VOIDP)
+        get_window = Fiddle::Function.new(
+          user32['GetWindow'],
+          [Fiddle::TYPE_VOIDP, Fiddle::TYPE_INT],
+          Fiddle::TYPE_VOIDP
+        )
+        seed = get_fore.call
+        return nil if seed.nil? || seed.to_i == 0
+
+        gw_hwndfirst = 0
+        gw_hwndnext = 2
+        hwnd = get_window.call(seed, gw_hwndfirst)
+        seen = {}
+        while hwnd && hwnd.to_i != 0 && !seen[hwnd.to_i]
+          seen[hwnd.to_i] = true
+          hwnd_i = hwnd.to_i
+          if window_visible?(hwnd_i) && window_pid(hwnd_i) == Process.pid && dialog_title?(window_title(hwnd_i))
+            return hwnd_i
+          end
+
+          hwnd = get_window.call(hwnd, gw_hwndnext)
+        end
+        nil
+      end
+      private_class_method :walk_dialog_hwnd
+
+      def window_alive?(hwnd)
+        require 'fiddle'
+        user32 = Fiddle.dlopen('user32.dll')
+        fn = Fiddle::Function.new(user32['IsWindow'], [Fiddle::TYPE_VOIDP], Fiddle::TYPE_INT)
+        fn.call(Fiddle::Pointer.new(hwnd)).to_i != 0
+      rescue StandardError
+        false
+      end
+      private_class_method :window_alive?
+
+      def window_visible?(hwnd)
+        require 'fiddle'
+        user32 = Fiddle.dlopen('user32.dll')
+        fn = Fiddle::Function.new(user32['IsWindowVisible'], [Fiddle::TYPE_VOIDP], Fiddle::TYPE_INT)
+        fn.call(Fiddle::Pointer.new(hwnd)).to_i != 0
+      rescue StandardError
+        false
+      end
+      private_class_method :window_visible?
+
+      def window_pid(hwnd)
+        require 'fiddle'
+        user32 = Fiddle.dlopen('user32.dll')
+        get_tid = Fiddle::Function.new(
+          user32['GetWindowThreadProcessId'],
+          [Fiddle::TYPE_VOIDP, Fiddle::TYPE_VOIDP],
+          Fiddle::TYPE_INT
+        )
+        buf = Fiddle::Pointer.malloc(8)
+        buf[0, 8] = 0.chr * 8
+        get_tid.call(Fiddle::Pointer.new(hwnd), buf)
+        buf[0, 4].unpack('L').first.to_i
+      rescue StandardError
+        0
+      end
+      private_class_method :window_pid
+
+      def window_title(hwnd)
+        require 'fiddle'
+        user32 = Fiddle.dlopen('user32.dll')
+        get_text = Fiddle::Function.new(
+          user32['GetWindowTextW'],
+          [Fiddle::TYPE_VOIDP, Fiddle::TYPE_VOIDP, Fiddle::TYPE_INT],
+          Fiddle::TYPE_INT
+        )
+        buf = Fiddle::Pointer.malloc(1024)
+        len = get_text.call(Fiddle::Pointer.new(hwnd), buf, 256).to_i
+        return '' if len <= 0
+
+        raw = buf.respond_to?(:to_str) ? buf.to_str(len * 2) : buf.to_s(len * 2)
+        raw.force_encoding('UTF-16LE').encode('UTF-8')
+      rescue StandardError
+        ''
+      end
+      private_class_method :window_title
+
+      def dialog_title?(text)
+        title = text.to_s.strip
+        title == TITLE || title.start_with?(TITLE)
+      end
+      private_class_method :dialog_title?
+
+      def utf16_ptr(text)
+        require 'fiddle'
+        data = text.to_s.encode('UTF-16LE') << "\0".encode('UTF-16LE')
+        ptr = Fiddle::Pointer.malloc(data.bytesize)
+        ptr[0, data.bytesize] = data.dup.force_encoding('ASCII-8BIT')
+        ptr
+      end
+      private_class_method :utf16_ptr
 
       def load_html!(dialog)
         html = File.read(HTML_PATH)
